@@ -1,6 +1,3 @@
-"""
-Main - Chạy khởi tạo nghiệm cho bài toán Drone Resupply Pick-up Delivery
-"""
 import sys
 import os
 

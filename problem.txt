@@ -1,0 +1,76 @@
+Mô tả bài toán: Drone resupply, pick up – delivery
+Ngữ cảnh bài toán: Hệ thống pickup – delivery sử dụng drone resupply tĩnh (thông tin về các gói hàng đã biết sẵn)
+-   	Input:
++ 1 depot
++ k xe tải, d drone
++ Tập Yêu cầu của các khách hàng được chia làm 2 tập:
+    	+ C1: Được tập kết ở depot, sẽ được xe tải thực hiện giao hàng trực tiếp cho khách hàng, thời điểm sẵn sàng để được đem đi giao là r_i >=0. Các gói hàng này sẽ được xe tải đem đi từ kho, hoặc drone sẽ resupply cho xe tải tại 1 vị trí khách hàng nào đó trong hành trình của xe tải, sau đó tài xế giao tận tay cho khách.
++ C2: Yêu cầu pickup và delivery  bởi xe tải: Gói hàng i sẽ được pickup tại vị trí p_i và giao cho vị trí d_i (r_i = 0)
+-   Ràng buộc:
++ Các xe tải có cùng capacity: M_T. Tổng khối lượng hàng hóa tại mỗi thời điểm của mỗi xe tải không được vượt quá M_T
++ Các drone có cùng capacity: M_D, thời gian bay tối đa là L_d. Tổng khối lượng hàng hóa tại mỗi thời điểm của mỗi drone không được vượt quá M_T. Tổng thời gian bay của drone (bao gồm nhận/tiếp tế hàng, chờ xe tải, bay đi bay về) không được vượt quá L_d
++ Khách hàng i có trọng lượng là m_i
++ Mỗi cặp khách hàng Pickup-delivery loại C2 phải thỏa mãn được phục vụ bời cùng 1 xe tải và điểm Pickup phải đứng trước điểm Delivery trong lộ trình của xe tải
++ Hành trình:
++ Xe tải: Mỗi xe chỉ đi nhiều trip (Nó có thể quay đợi drone resupply hoặc quay về deport để lấy các gói hàng mới được chuẩn bị xong)
++ Drone: Đi nhiều trip, mỗi lần chỉ gặp 1 xe tải rồi quay về
++ Thời gian xe tải phục vụ khách hàng là Truck_service_time_per_customer
++ Thời gian xe tải nhận hàng tại depot là Truck_receive_time_at_depot
++ Thời gian để bốc dỡ hàng và cất cánh cho drone là drone_handling_time (cả ở depot và nơi gặp xe tải)
++ Xe tải và drone đợi lẫn nhau (Thời gian drone chờ xe tải, bị tính vào thời gian bay)
+-   	Objective: tối thiểu hoá thời gian hoàn thành nhiệm vụ
+-   	Output: Hành trình của truck, drone
+***. Lưu ý:
+Khi xe tải tới điểm i: nếu gói hàng i có sẵn trên xe tải thì xe sẽ giao hàng trước rồi mới lấy hàng từ drone, còn nếu gói hàng i chưa có trên xe tải thì nó cần được drone resupply tại i hoặc tại một điểm trước i.
+Luôn kiểm tra tải trong của xe tải sau khi rời khỏi 1 điểm vì nó có thể tăng hoặc giảm do delivery, resupply hoặc pickup xem có vượt quá M_T không
+
+Cách giải quyết:
+Sử dụng Tabu Search
+Data mẫu: ./data/test.txt
+
+Các thông số như sau:
+Depot_positions:
+  - Center: (10, 10)
+# ------------------------
+# Truck parameters
+# ------------------------
+Truck:
+  M_T: 50 packages
+  Speed: 30 km/h
+  Truck_service_time_per_customer: 3 min
+  Truck_receive_time_at_depot (δt): 5 min
+  Distance_metric: Manhattan
+
+# ------------------------
+# Drone parameters
+# ------------------------
+Drone:
+  Flight_endurance: 90 min
+  Working_speed: 60 km/h
+  Distance_metric: Euclidean
+  drone_handling_time: 5 min
+  Load_capacity_Q: 10 packages
+
+  -- Number of trucks = number of drones = 2
+  Lưu ý: mỗi lần truck “phục vụ” tại depot (tức là ghé depot giữa chừng hoặc ở đầu/cuối) thì chỉ mất đúng δt thời gian
+
+----------------------------------------------------------------
+Dữ liệu mẫu có dạng như sau:
+# id X Y type ready_time pair_id
+1 16.03 1.13 D 65 0
+2 9.08 2.1 D 58 0
+3 13.68 19.95 D 23 0
+4 4.21 12.8 P 0 1
+5 13.71 15.86 D 32 0
+6 17.11 10.61 D 39 0
+7 9.96 15.37 D 63 0
+8 6.44 14.94 D 40 0
+9 7.64 15.92 D 13 0
+10 14.7 14.36 DL 0 1
+
+Mô tả:
+   - X, Y là tọa độ của khách hàng. đơn vị là Km
+   - Các khách hàng type=D là thuộc loại C1
+   - Các khách hàng type=P và type=DL là thuộc loại C2, trong đó type=P là điểm Pickup và type=DL là điểm Delivery
+   - ready_time là thời gian sẵn sàng
+   - pair_id là mã số của cặp khách hàng C2. Các khách hàng type=P và type=DL cùng cặp nếu có cùng số pair_id

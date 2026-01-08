@@ -3,11 +3,14 @@ Configuration - Đọc các tham số từ biến môi trường
 """
 import os
 from pathlib import Path
-from dotenv import load_dotenv
 
-# Load .env file từ thư mục gốc project
-env_path = Path(__file__).parent.parent / '.env'
-load_dotenv(env_path)
+try:
+    from dotenv import load_dotenv
+    # Load .env file từ thư mục gốc project
+    env_path = Path(__file__).parent.parent / '.env'
+    load_dotenv(env_path)
+except ImportError:
+    pass # dotenv not installed, using defaults
 
 
 def get_env_float(key: str, default: float) -> float:

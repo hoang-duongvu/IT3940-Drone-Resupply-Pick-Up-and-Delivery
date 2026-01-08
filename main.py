@@ -32,105 +32,160 @@ def print_problem_info(problem):
     print("=" * 60)
 
 
-def visualize_solution(solution, filename="solution.png"):
-    """Vẽ lời giải (nếu có matplotlib)"""
+def visualize_solution(solution, filename="solution.svg"):
+    """
+    Vẽ lời giải ra file SVG (Dependency-free).
+    """
     try:
-        import matplotlib
-        matplotlib.use('Agg')  # Non-interactive backend
-        import matplotlib.pyplot as plt
-
-        fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+        if not filename.endswith('.svg'):
+            filename = filename.rsplit('.', 1)[0] + '.svg'
 
         problem = solution.problem
         depot_x, depot_y = problem.depot
 
-        # Vẽ depot
-        ax.plot(depot_x, depot_y, 's', color='black', markersize=15, label='Depot', zorder=5)
-        ax.annotate('Depot', (depot_x, depot_y), textcoords="offset points",
-                    xytext=(0, 10), ha='center', fontsize=10, fontweight='bold')
+        # 1. Calculate Bounding Box
+        min_x, max_x = depot_x, depot_x
+        min_y, max_y = depot_y, depot_y
 
-        # Màu cho trucks và drones
-        truck_colors = ['blue', 'green', 'orange', 'purple']
-        drone_colors = ['red', 'magenta']
+        for c in problem.customers.values():
+            min_x = min(min_x, c.x)
+            max_x = max(max_x, c.x)
+            min_y = min(min_y, c.y)
+            max_y = max(max_y, c.y)
 
-        # Vẽ truck routes
-        for truck in solution.trucks:
-            color = truck_colors[truck.truck_id % len(truck_colors)]
-            for trip in truck.trips:
-                if trip.is_empty():
-                    continue
+        # Padding
+        padding_pct = 0.1
+        width_span = max_x - min_x
+        height_span = max_y - min_y
+        
+        # Avoid division by zero if single point
+        if width_span == 0: width_span = 10
+        if height_span == 0: height_span = 10
 
-                # Lấy tọa độ các điểm
-                x_coords = []
-                y_coords = []
-                for cid in trip.route:
-                    pos = problem.get_position(cid)
-                    x_coords.append(pos[0])
-                    y_coords.append(pos[1])
+        min_x -= width_span * padding_pct
+        max_x += width_span * padding_pct
+        min_y -= height_span * padding_pct
+        max_y += height_span * padding_pct
 
-                # Vẽ đường đi
-                ax.plot(x_coords, y_coords, '-', color=color, linewidth=2,
-                        label=f'Truck {truck.truck_id}' if trip == truck.trips[0] else '')
+        # Canvas Size
+        svg_width = 800
+        svg_height = 800 * (max_y - min_y) / (max_x - min_x)
+        if svg_height > 1000: svg_height = 1000
+        if svg_height < 400: svg_height = 400
 
-                # Vẽ mũi tên chỉ hướng
-                for i in range(len(x_coords) - 1):
-                    mid_x = (x_coords[i] + x_coords[i+1]) / 2
-                    mid_y = (y_coords[i] + y_coords[i+1]) / 2
-                    dx = x_coords[i+1] - x_coords[i]
-                    dy = y_coords[i+1] - y_coords[i]
-                    ax.annotate('', xy=(mid_x + dx*0.1, mid_y + dy*0.1),
-                               xytext=(mid_x - dx*0.1, mid_y - dy*0.1),
-                               arrowprops=dict(arrowstyle='->', color=color, lw=1.5))
+        def to_svg_coord(x, y):
+            # Map x from [min_x, max_x] to [0, svg_width]
+            # Map y from [min_y, max_y] to [svg_height, 0] (flip Y)
+            sx = (x - min_x) / (max_x - min_x) * svg_width
+            sy = svg_height - (y - min_y) / (max_y - min_y) * svg_height
+            return sx, sy
 
-        # Vẽ drone missions
+        # Colors
+        truck_colors = ['#1f77b4', '#2ca02c', '#ff7f0e', '#9467bd', '#8c564b']
+        drone_colors = ['#d62728', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+        
+        svg_content = []
+        svg_content.append(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {svg_width} {svg_height}" style="background-color: white;">')
+        
+        # Grid (Optional)
+        svg_content.append('<style>.txt { font-family: sans-serif; font-size: 12px; } .label { font-weight: bold; font-size: 10px; }</style>')
+
+        # 2. Draw Drone Missions (Dotted lines)
         for drone in solution.drones:
             color = drone_colors[drone.drone_id % len(drone_colors)]
             for mission in drone.missions:
-                meet_pos = problem.get_position(mission.meet_point)
-                # Vẽ đường bay (nét đứt)
-                ax.plot([depot_x, meet_pos[0]], [depot_y, meet_pos[1]],
-                        '--', color=color, linewidth=1.5, alpha=0.7,
-                        label=f'Drone {drone.drone_id}' if mission == drone.missions[0] else '')
+                d_sx, d_sy = to_svg_coord(depot_x, depot_y)
+                m_sx, m_sy = to_svg_coord(*problem.get_position(mission.meet_point))
+                
+                # Draw line
+                svg_content.append(f'<line x1="{d_sx}" y1="{d_sy}" x2="{m_sx}" y2="{m_sy}" '
+                                   f'stroke="{color}" stroke-width="2" stroke-dasharray="5,5" opacity="0.7" />')
+                
+                # Label for Drone
+                mid_x, mid_y = (d_sx + m_sx)/2, (d_sy + m_sy)/2
+                svg_content.append(f'<text x="{mid_x}" y="{mid_y}" fill="{color}" class="txt">D{drone.drone_id}</text>')
 
-        # Vẽ customers
+        # 3. Draw Truck Routes (Solid lines)
+        for truck in solution.trucks:
+            color = truck_colors[truck.truck_id % len(truck_colors)]
+            for trip in truck.trips:
+                if trip.is_empty(): continue
+                
+                points = []
+                for cid in trip.route:
+                    points.append(to_svg_coord(*problem.get_position(cid)))
+                
+                polyline_points = " ".join([f"{p[0]},{p[1]}" for p in points])
+                svg_content.append(f'<polyline points="{polyline_points}" fill="none" stroke="{color}" stroke-width="2" />')
+                
+                # Arrows
+                for i in range(len(points) - 1):
+                    p1 = points[i]
+                    p2 = points[i+1]
+                    # Midpoint
+                    mx, my = (p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2
+                    # Small circle as arrow head marker (simplified)
+                    svg_content.append(f'<circle cx="{mx}" cy="{my}" r="2" fill="{color}" />')
+                    
+                    if i == 0:
+                         svg_content.append(f'<text x="{mx}" y="{my-5}" fill="{color}" class="txt" font-weight="bold">T{truck.truck_id}</text>')
+
+        # 4. Draw Locations
+        
+        # Depot
+        dx, dy = to_svg_coord(depot_x, depot_y)
+        svg_content.append(f'<rect x="{dx-10}" y="{dy-10}" width="20" height="20" fill="black" />')
+        svg_content.append(f'<text x="{dx}" y="{dy-15}" text-anchor="middle" class="label">DEPOT</text>')
+
+        # Customers
         for cid, customer in problem.customers.items():
+            cx, cy = to_svg_coord(customer.x, customer.y)
+            
+            fill = "gray"
+            shape = "circle" # default
+            
             if customer.ctype == CustomerType.D:
-                marker = 'o'
-                color = 'lightblue'
-                label = f'{cid}'
+                fill = "lightblue"
+                shape = "circle"
             elif customer.ctype == CustomerType.P:
-                marker = '^'
-                color = 'lightgreen'
-                label = f'{cid}(P)'
-            else:  # DL
-                marker = 'v'
-                color = 'lightyellow'
-                label = f'{cid}(DL)'
+                fill = "lightgreen" # Pickup
+                shape = "rect"
+            elif customer.ctype == CustomerType.DL:
+                fill = "lightyellow" # Delivery of Pair
+                shape = "triangle"
+            
+            stroke = "black"
+            
+            if shape == "circle":
+                svg_content.append(f'<circle cx="{cx}" cy="{cy}" r="6" fill="{fill}" stroke="{stroke}" stroke-width="1"/>')
+            elif shape == "rect":
+                svg_content.append(f'<rect x="{cx-6}" y="{cy-6}" width="12" height="12" fill="{fill}" stroke="{stroke}" stroke-width="1"/>')
+            elif shape == "triangle":
+                # Inverted triangle
+                pts = f"{cx},{cy+6} {cx-6},{cy-6} {cx+6},{cy-6}"
+                svg_content.append(f'<polygon points="{pts}" fill="{fill}" stroke="{stroke}" stroke-width="1"/>')
 
-            ax.plot(customer.x, customer.y, marker, color=color,
-                    markersize=12, markeredgecolor='black', zorder=4)
-            ax.annotate(label, (customer.x, customer.y),
-                       textcoords="offset points", xytext=(5, 5),
-                       ha='left', fontsize=8)
+            # Label
+            svg_content.append(f'<text x="{cx}" y="{cy-8}" text-anchor="middle" class="label">{cid}</text>')
 
-        # Legend và labels
-        ax.set_xlabel('X (km)')
-        ax.set_ylabel('Y (km)')
-        ax.set_title('Drone Resupply Pick-up Delivery Solution')
-        ax.legend(loc='upper right')
-        ax.grid(True, alpha=0.3)
-        ax.set_aspect('equal')
+        # Legend
+        svg_content.append(f'<rect x="10" y="10" width="150" height="90" fill="white" stroke="black" opacity="0.8"/>')
+        svg_content.append(f'<text x="20" y="30" class="txt">Depot (Square)</text>')
+        svg_content.append(f'<text x="20" y="50" class="txt"><tspan fill="lightblue">●</tspan> C1 Customer</text>')
+        svg_content.append(f'<text x="20" y="70" class="txt"><tspan fill="lightgreen">■</tspan> Pickup (C2)</text>')
+        svg_content.append(f'<text x="20" y="90" class="txt"><tspan fill="lightyellow">▼</tspan> Delivery (C2)</text>')
 
-        # plt.savefig(filename, dpi=150, bbox_inches='tight')
-        plt.close()
-        print(f"\n[Visualization] Saved to {filename}")
+        svg_content.append('</svg>')
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write("\n".join(svg_content))
+            
+        print(f"\n[Visualization] Saved solution to {filename}")
 
-    except ImportError:
-        print("\n[Visualization] matplotlib not installed. Skipping visualization.")
-        print("  Install with: pip install matplotlib")
     except Exception as e:
-        print(f"\n[Visualization] Error: {e}")
-        print("  Skipping visualization due to compatibility issue.")
+        print(f"\n[Visualization] Error generating SVG: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def main():

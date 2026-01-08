@@ -90,20 +90,44 @@ def visualize_solution(solution, filename="solution.svg"):
         # Grid (Optional)
         svg_content.append('<style>.txt { font-family: sans-serif; font-size: 12px; } .label { font-weight: bold; font-size: 10px; }</style>')
 
-        # 2. Draw Drone Missions (Dotted lines)
+        # 2. Draw Drone Missions (Curved lines)
+        import math
         for drone in solution.drones:
             color = drone_colors[drone.drone_id % len(drone_colors)]
             for mission in drone.missions:
                 d_sx, d_sy = to_svg_coord(depot_x, depot_y)
                 m_sx, m_sy = to_svg_coord(*problem.get_position(mission.meet_point))
                 
-                # Draw line
-                svg_content.append(f'<line x1="{d_sx}" y1="{d_sy}" x2="{m_sx}" y2="{m_sy}" '
-                                   f'stroke="{color}" stroke-width="2" stroke-dasharray="5,5" opacity="0.7" />')
+                # Math for Control Point (Curve)
+                # Midpoint
+                mx, my = (d_sx + m_sx) / 2, (d_sy + m_sy) / 2
                 
-                # Label for Drone
-                mid_x, mid_y = (d_sx + m_sx)/2, (d_sy + m_sy)/2
-                svg_content.append(f'<text x="{mid_x}" y="{mid_y}" fill="{color}" class="txt">D{drone.drone_id}</text>')
+                # Vector from Depot to Meet
+                dx, dy = m_sx - d_sx, m_sy - d_sy
+                dist = math.sqrt(dx*dx + dy*dy)
+                
+                if dist == 0: continue
+
+                # Normal vector (perpendicular)
+                # (-dy, dx)
+                nx, ny = -dy, dx
+                
+                # Normalize and scale
+                # Curve magnitude depends on distance (e.g., 20% of distance)
+                offset = dist * 0.2
+                
+                # Control point
+                cx = mx + (nx / dist) * offset
+                cy = my + (ny / dist) * offset
+                
+                # Draw Curve (Path with Quadratic Bezier)
+                # M start Q control end
+                path_d = f"M {d_sx},{d_sy} Q {cx},{cy} {m_sx},{m_sy}"
+                
+                svg_content.append(f'<path d="{path_d}" fill="none" stroke="{color}" stroke-width="2" stroke-dasharray="5,5" opacity="0.8" />')
+                
+                # Label for Drone (at control point/mid curve)
+                svg_content.append(f'<text x="{cx}" y="{cy}" fill="{color}" class="txt" font-weight="bold">D{drone.drone_id}</text>')
 
         # 3. Draw Truck Routes (Solid lines)
         for truck in solution.trucks:
@@ -206,15 +230,24 @@ def main():
     initializer = SolutionInitializer(problem)
     solution = initializer.initialize()
 
-    # 3. Print solution
-    print("\n[Step 3] Solution details:")
+    # 3. Print initial solution
+    print("\n[Step 3] Initial Solution details:")
     solution.print_solution()
 
-    # 4. Visualize (optional)
-    print("\n[Step 4] Visualization...")
-    visualize_solution(solution)
+    # 4. Optimize with Tabu Search
+    print("\n[Step 4] Running Tabu Search Optimization...")
+    from optimization import TabuSearch
+    tabu = TabuSearch(problem, solution)
+    optimized_solution = tabu.solve(max_iterations=100, tabu_tenure=10)
 
-    return solution
+    print("\n[Step 5] Optimized Solution details:")
+    optimized_solution.print_solution()
+
+    # 5. Visualize (optional)
+    print("\n[Step 6] Visualization...")
+    visualize_solution(optimized_solution)
+
+    return optimized_solution
 
 
 if __name__ == "__main__":

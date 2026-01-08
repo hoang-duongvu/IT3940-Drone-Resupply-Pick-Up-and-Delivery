@@ -290,52 +290,37 @@ class SolutionInitializer:
 
         return current_load
 
+    # OK
     def _assign_drone_resupply(self, trucks: List[TruckRoute]) -> List[DroneRoute]:
         """
         Xác định packages cần drone resupply
-        Logic: Packages C1 có ready_time làm truck phải chờ → cần drone resupply
+        Logic: Packages C1 có ready_time > thời gian truck đến → cần drone resupply
         Gộp packages theo trip: các packages cùng trip của cùng truck sẽ được gom vào 1 mission
         """
         drones = [DroneRoute(drone_id=i) for i in range(NUM_DRONES)]
 
+        # Tìm packages C1 có ready_time > 0, nhóm theo (truck_id, trip_idx)
         from collections import defaultdict
         grouped_packages = defaultdict(list)  # (truck_id, trip_idx) → list of packages
 
         for truck in trucks:
-            current_time = 0.0  # Thời điểm truck sẵn sàng bắt đầu trip tiếp theo
-
+            current_time = 0
             for trip_idx, trip in enumerate(truck.trips):
-                # Tính max_ready_time của trip này (tất cả C1 packages)
-                trip_c1_ready_times = []
-                for cid in trip.customers():
-                    customer = self.problem.get_customer(cid)
-                    if customer.ctype == CustomerType.D:
-                        trip_c1_ready_times.append(customer.ready_time)
-                
-                trip_max_ready = max(trip_c1_ready_times) if trip_c1_ready_times else 0
-                
-                # Thời gian thực sự bắt đầu trip (chờ hàng sẵn sàng)
-                actual_trip_start = max(current_time, trip_max_ready) + TRUCK_RECEIVE_TIME
-                
-                # Duyệt route để tìm candidates
-                travel_time_acc = 0
+                current_time += TRUCK_RECEIVE_TIME
                 prev = 0
+
                 for cid in trip.route[1:]:  # Bỏ depot đầu
-                    travel_time_acc += self.problem.truck_travel_time(prev, cid)
-                    
+                    current_time += self.problem.truck_travel_time(prev, cid)
+
                     if cid == 0:
                         continue
-                    
+                           
                     customer = self.problem.get_customer(cid)
-                    
-                    # Optimistic arrival: Thời gian đến NẾU không phải chờ package này
-                    # = actual_trip_start + travel + service trước đó
-                    # Nhưng để đơn giản, ta tính arrival nếu trip bắt đầu tại current_time (không chờ)
-                    optimistic_arrival = current_time + TRUCK_RECEIVE_TIME + travel_time_acc
-                    
+
+                    # Nếu là C1 và truck đến TRƯỚC khi package ready
                     if customer.ctype == CustomerType.D and customer.ready_time > 0:
-                        # Nếu truck đến sớm hơn package ready -> package này gây chờ
-                        if optimistic_arrival < customer.ready_time:
+                        if current_time < customer.ready_time:
+                            # Thêm vào nhóm theo (truck_id, trip_idx)
                             key = (truck.truck_id, trip_idx)
                             grouped_packages[key].append({
                                 'package_id': cid,
@@ -343,13 +328,34 @@ class SolutionInitializer:
                                 'meet_point': cid,
                                 'weight': customer.weight
                             })
-                    
-                    travel_time_acc += TRUCK_SERVICE_TIME
+
+                    current_time += TRUCK_SERVICE_TIME
                     prev = cid
-                
-                # Cập nhật current_time: Thời điểm truck về đến depot sau trip này
-                trip_end_time = actual_trip_start + travel_time_acc
-                current_time = trip_end_time
+
+                # Nếu không có package nào được chọn -> Chọn package có ready time lớn nhất
+                key = (truck.truck_id, trip_idx)
+                if not grouped_packages[key]:
+                    # Tìm max ready time package trong trip (chỉ C1)
+                    best_pkg = None
+                    max_rt = -1
+                    
+                    for c_id in trip.customers():
+                         c = self.problem.get_customer(c_id)
+                         if c.ctype == CustomerType.D and c.ready_time > 0:
+                             if c.ready_time > max_rt:
+                                 max_rt = c.ready_time
+                                 best_pkg = c
+                    
+                    if best_pkg:
+                        # Thử assign
+                        best_meet = self._find_best_meet_point(trip, best_pkg.id, best_pkg.weight)
+                        if best_meet:
+                            grouped_packages[key].append({
+                                'package_id': best_pkg.id,
+                                'ready_time': best_pkg.ready_time,
+                                'meet_point': best_pkg.id,
+                                'weight': best_pkg.weight
+                            })
 
         # Tạo missions từ các nhóm packages
         all_missions = []
@@ -433,3 +439,40 @@ class SolutionInitializer:
             prev = cid
 
         return time
+
+    def _find_best_meet_point(self, trip: Trip, pkg_id: int, pkg_weight: int) -> Tuple[int, float]:
+        """
+        Tìm meet point tốt nhất cho gói hàng (backtracking từ điểm delivery ngược về đầu trip)
+        Trả về: (meet_point_id, wait_time_at_meet_point) hoặc None
+        """
+        # Xác định vị trí của package trong trip
+        try:
+            pkg_idx = trip.route.index(pkg_id)
+        except ValueError:
+            return None
+
+        # Backtrack từ vị trí package về đầu trip
+        candidates = trip.route[1:pkg_idx+1] # Các candidate là các điểm từ đầu đến điểm delivery
+        
+        for meet_point in reversed(candidates):
+            # Checking feasibility
+            
+            # 1. Drone Flight Time Check
+            # Flight Time = Out + Wait + In
+            # Wait = max(0, Truck_Arrival - Drone_Arrival)
+            
+            # Ở đây ta dùng heuristic kiểm tra điều kiện cần: 
+            # Total Active Time (Fly + 2*Handling) <= Endurance
+            
+            fly_out = self.problem.drone_travel_time(0, meet_point)
+            fly_in = self.problem.drone_travel_time(meet_point, 0)
+            
+            # Total active time
+            total_active = fly_out + fly_in + 2 * DRONE_HANDLING_TIME
+            
+            if total_active > DRONE_FLIGHT_TIME:
+                continue # Quá xa
+                
+            return meet_point
+
+        return None

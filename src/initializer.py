@@ -290,37 +290,52 @@ class SolutionInitializer:
 
         return current_load
 
-    # Sai
     def _assign_drone_resupply(self, trucks: List[TruckRoute]) -> List[DroneRoute]:
         """
         Xác định packages cần drone resupply
-        Logic: Packages C1 có ready_time > thời gian truck đến → cần drone resupply
+        Logic: Packages C1 có ready_time làm truck phải chờ → cần drone resupply
         Gộp packages theo trip: các packages cùng trip của cùng truck sẽ được gom vào 1 mission
         """
         drones = [DroneRoute(drone_id=i) for i in range(NUM_DRONES)]
 
-        # Tìm packages C1 có ready_time > 0, nhóm theo (truck_id, trip_idx)
         from collections import defaultdict
         grouped_packages = defaultdict(list)  # (truck_id, trip_idx) → list of packages
 
         for truck in trucks:
-            current_time = 0
+            current_time = 0.0  # Thời điểm truck sẵn sàng bắt đầu trip tiếp theo
+
             for trip_idx, trip in enumerate(truck.trips):
-                current_time += TRUCK_RECEIVE_TIME
+                # Tính max_ready_time của trip này (tất cả C1 packages)
+                trip_c1_ready_times = []
+                for cid in trip.customers():
+                    customer = self.problem.get_customer(cid)
+                    if customer.ctype == CustomerType.D:
+                        trip_c1_ready_times.append(customer.ready_time)
+                
+                trip_max_ready = max(trip_c1_ready_times) if trip_c1_ready_times else 0
+                
+                # Thời gian thực sự bắt đầu trip (chờ hàng sẵn sàng)
+                actual_trip_start = max(current_time, trip_max_ready) + TRUCK_RECEIVE_TIME
+                
+                # Duyệt route để tìm candidates
+                travel_time_acc = 0
                 prev = 0
-
                 for cid in trip.route[1:]:  # Bỏ depot đầu
-                    current_time += self.problem.truck_travel_time(prev, cid)
-
+                    travel_time_acc += self.problem.truck_travel_time(prev, cid)
+                    
                     if cid == 0:
                         continue
-                           
+                    
                     customer = self.problem.get_customer(cid)
-
-                    # Nếu là C1 và truck đến TRƯỚC khi package ready
+                    
+                    # Optimistic arrival: Thời gian đến NẾU không phải chờ package này
+                    # = actual_trip_start + travel + service trước đó
+                    # Nhưng để đơn giản, ta tính arrival nếu trip bắt đầu tại current_time (không chờ)
+                    optimistic_arrival = current_time + TRUCK_RECEIVE_TIME + travel_time_acc
+                    
                     if customer.ctype == CustomerType.D and customer.ready_time > 0:
-                        if current_time < customer.ready_time:
-                            # Thêm vào nhóm theo (truck_id, trip_idx)
+                        # Nếu truck đến sớm hơn package ready -> package này gây chờ
+                        if optimistic_arrival < customer.ready_time:
                             key = (truck.truck_id, trip_idx)
                             grouped_packages[key].append({
                                 'package_id': cid,
@@ -328,9 +343,13 @@ class SolutionInitializer:
                                 'meet_point': cid,
                                 'weight': customer.weight
                             })
-
-                    current_time += TRUCK_SERVICE_TIME
+                    
+                    travel_time_acc += TRUCK_SERVICE_TIME
                     prev = cid
+                
+                # Cập nhật current_time: Thời điểm truck về đến depot sau trip này
+                trip_end_time = actual_trip_start + travel_time_acc
+                current_time = trip_end_time
 
         # Tạo missions từ các nhóm packages
         all_missions = []

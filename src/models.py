@@ -345,13 +345,21 @@ class Solution:
     def check_drone_flight_time(self) -> Tuple[bool, List[str]]:
         """Kiểm tra ràng buộc thời gian bay của drone"""
         violations = []
+        
+        # Lấy timeline chính xác (bao gồm chờ đợi)
+        _, drone_map, calc_violations = self.calculate_timestamps()
+        
+        # Nếu quá trình tính toán đã có lỗi (vd: không tìm thấy meeting point), return luôn
+        if calc_violations:
+            return False, calc_violations
 
         for drone in self.drones:
             for m_idx, mission in enumerate(drone.missions):
-                # Thời gian = handling depot + bay đi + handling điểm gặp + bay về
-                fly_time = 2 * self.problem.drone_travel_time(0, mission.meet_point)
-                handling_time = 2 * DRONE_HANDLING_TIME
-                total_time = fly_time + handling_time
+                info = drone_map.get((drone.drone_id, m_idx))
+                if not info:
+                    continue # Should be caught in calc_violations
+                    
+                total_time = info['flight_time']
 
                 if total_time > DRONE_FLIGHT_TIME:
                     violations.append(
@@ -372,7 +380,7 @@ class Solution:
             delivery_global_pos = None
 
             for truck in self.trucks:
-                global_pos = 0
+                global_pos = 0 # Vị trí của điểm này trong toàn thể lộ trình của truck chứ không riêng gì 1 trip
                 for trip_idx, trip in enumerate(truck.trips):
                     for pos, cid in enumerate(trip.route):
                         if cid == pickup_id:
@@ -438,114 +446,390 @@ class Solution:
         self._is_feasible = feasible
         return feasible, all_violations
 
-    # ========== MAKESPAN CALCULATION ==========
-    def calculate_truck_time(self, truck: TruckRoute) -> float:
-        """Tính thời gian hoàn thành của một truck"""
-        total_time = 0.0
+    # ========== MAKESPAN CALCULATION (GRAPH BASED) ==========
+    def calculate_timestamps(self) -> Tuple[Dict, Dict, List[str]]:
+        """
+        Tính toán mốc thời gian chi tiết cho toàn bộ hệ thống (Truck & Drone).
+        Trả về:
+          - truck_timeline: Dict[(truck_id, trip_idx, pos), {events...}]
+          - drone_timeline: Dict[(drone_id, mission_idx), {events...}]
+          - violations: List[str] các lỗi thời gian (nếu có)
+        """
+        violations = []
 
-        for trip in truck.trips:
-            if trip.is_empty():
-                continue
+        # 1. Xây dựng MAP:
+        #    - drone_mission_map: (drone_id, mission_idx) -> Mission object
+        #    - truck_node_map: (truck_id, trip_idx, pos) -> Customer ID
+        #    - resupply_map: (truck_id, trip_idx, pos) -> (drone_id, mission_idx)
+        resupply_map = {}
+        
+        # Duyệt drone để xây dựng resupply map
+        for drone in self.drones:
+            for m_idx, mission in enumerate(drone.missions):
+                # Tìm vị trí truck mà drone này resupply
+                # truck_id = mission.truck_id, meet_point = mission.meet_point
+                # Phải tìm trip_idx, pos trong truck route
+                found = False
+                for truck in self.trucks:
+                    if truck.truck_id == mission.truck_id:
+                        pos_info = truck.find_customer_position(mission.meet_point)
+                        if pos_info:
+                            trip_idx, pos = pos_info
+                            # Lưu ánh xạ: Tại vị trí này của truck, có drone mission này
+                            resupply_map[(truck.truck_id, trip_idx, pos)] = (drone.drone_id, m_idx)
+                            found = True
+                        break
+                if not found:
+                    violations.append(f"Drone {drone.drone_id} Mission {m_idx}: Cannot find meet point {mission.meet_point} on Truck {mission.truck_id}")
 
-            # Thời gian nhận hàng tại depot (đầu trip)
-            total_time += TRUCK_RECEIVE_TIME
+        # 2. Khởi tạo Memoization Cache
+        memo_truck = {} # Key: (truck_id, trip_idx, pos) -> {arrival, depart...}
+        memo_drone = {} # Key: (drone_id, mission_idx) -> {ready, return...}
+        visiting = set() # Phát hiện chu trình
 
-            # Duyệt route
-            prev = 0
-            for cid in trip.route[1:]:
-                # Thời gian di chuyển
-                total_time += self.problem.truck_travel_time(prev, cid)
+        # 3. Recursive Functions
 
-                if cid != 0:
-                    # Thời gian phục vụ khách hàng
-                    total_time += TRUCK_SERVICE_TIME
+        def get_drone_times(d_id, m_idx):
+            # Tính mốc thời gian của 1 chuyến mission: m_idx - ôk
+            state_key = f"D{d_id}_{m_idx}"
+            if (d_id, m_idx) in memo_drone: return memo_drone[(d_id, m_idx)]
+            if state_key in visiting:
+                return None 
+            visiting.add(state_key)
 
-                prev = cid
+            drone = next(d for d in self.drones if d.drone_id == d_id)
+            mission = drone.missions[m_idx]
 
-        return total_time
+            # 1. Ready at Depot - OK
+            if m_idx == 0:
+                ready_at_depot = 0.0
+            else:
+                prev_mission = get_drone_times(d_id, m_idx - 1)
+                ready_at_depot = prev_mission['return_depot']
 
-    def calculate_drone_time(self, drone: DroneRoute) -> float:
-        """Tính thời gian hoàn thành của một drone"""
-        total_time = 0.0
+            # Ràng buộc: ready_time của packages - OK
+            max_pkg_ready = 0
+            for pkg_id in mission.packages:
+                max_pkg_ready = max(max_pkg_ready, self.problem.get_customer(pkg_id).ready_time)
+            
+            ready_at_depot = max(ready_at_depot, max_pkg_ready)
 
-        for mission in drone.missions:
-            # Handling tại depot
-            total_time += DRONE_HANDLING_TIME
-            # Bay đến điểm gặp
-            total_time += self.problem.drone_travel_time(0, mission.meet_point)
-            # Handling tại điểm gặp
-            total_time += DRONE_HANDLING_TIME
-            # Bay về depot
-            total_time += self.problem.drone_travel_time(mission.meet_point, 0)
+            # 2. Start Service at Depot (Handling) - OK
+            start_load = ready_at_depot
+            finish_load = start_load + DRONE_HANDLING_TIME
+            
+            # 3. Fly to Meet Point
+            depart_depot = finish_load
+            fly_time_out = self.problem.drone_travel_time(0, mission.meet_point)
+            arrive_meet = depart_depot + fly_time_out
 
-        return total_time
+            # 4. Interaction with Truck (Wait for Truck) - OK
+            truck_resinfo = None
+            for tid, trips_val in resupply_map.items():
+                if trips_val == (d_id, m_idx):
+                    truck_resinfo = tid # (truck_id, trip_idx, pos)
+                    break
+            
+            if not truck_resinfo:
+                 visiting.remove(state_key)
+                 return {} 
+            
+            tr_id, tr_idx, tr_pos = truck_resinfo
+            
+            # Lấy thông tin Arrival của Truck (chưa tính resupply wait) - OK
+            truck_node_times = get_truck_base_arrival(tr_id, tr_idx, tr_pos)
+            
+            truck = next(t for t in self.trucks if t.truck_id == tr_id)
+            c_curr_id = truck.trips[tr_idx].route[tr_pos]
+            
+            # Check if resupply is needed for current customer
+            is_needed_now = (c_curr_id in mission.packages)
+            
+            if is_needed_now:
+                # Needed NOW: Truck Arrive -> Receive -> Service
+                # Truck ready to receive ngay khi đến
+                truck_ready_for_drone = truck_node_times['arrival']
+            else:
+                # Future use: Truck Arrive -> Service -> Receive
+                service_duration = TRUCK_SERVICE_TIME if c_curr_id != 0 else 0
+                truck_ready_for_drone = truck_node_times['arrival'] + service_duration
+
+            # SYNC
+            start_transfer = max(arrive_meet, truck_ready_for_drone)
+            finish_transfer = start_transfer + DRONE_HANDLING_TIME
+            
+            # 5. Fly Back
+            depart_meet = finish_transfer
+            fly_time_in = self.problem.drone_travel_time(mission.meet_point, 0)
+            return_depot = depart_meet + fly_time_in
+            
+            res = {
+                'ready_at_depot': ready_at_depot,
+                'start_load': start_load,
+                'depart_depot': depart_depot,
+                'arrive_meet': arrive_meet,
+                'start_transfer': start_transfer,
+                'finish_transfer': finish_transfer,
+                'depart_meet': depart_meet,
+                'return_depot': return_depot,
+                'flight_time': return_depot - depart_depot # Total flight cycle
+            }
+            memo_drone[(d_id, m_idx)] = res
+            visiting.remove(state_key)
+            return res
+
+        def get_truck_base_arrival(t_id, tr_idx, pos):
+            # Tính thời gian đến 1 điểm trong lộ trình của Truck - ok
+            # Arrival(N) = Departure(N-1) + Travel
+            if pos == 0:
+                if tr_idx == 0:
+                    return {'arrival': 0.0} 
+                else:
+                    # Arrival tại depot = Departure của trip trước
+                    truck = next(t for t in self.trucks if t.truck_id == t_id)
+                    prev_trip = truck.trips[tr_idx - 1]
+                    prev_node = get_truck_full_node(t_id, tr_idx - 1, len(prev_trip.route) - 1)
+                    return {'arrival': prev_node['departure']}
+            
+            prev_node = get_truck_full_node(t_id, tr_idx, pos - 1)
+            truck = next(t for t in self.trucks if t.truck_id == t_id)
+            curr_trip = truck.trips[tr_idx]
+            prev_cid = curr_trip.route[pos - 1]
+            curr_cid = curr_trip.route[pos]
+            
+            travel_time = self.problem.truck_travel_time(prev_cid, curr_cid)
+            arrival = prev_node['departure'] + travel_time
+            return {'arrival': arrival}
+
+        def get_truck_full_node(t_id, tr_idx, pos):
+            # Tính mốc thời gian của 1 truck tại 1 node: m_idx - ôk
+            state_key = f"T{t_id}_{tr_idx}_{pos}"
+            if (t_id, tr_idx, pos) in memo_truck: return memo_truck[(t_id, tr_idx, pos)]
+            if state_key in visiting:
+                return {'departure': float('inf')} 
+            visiting.add(state_key)
+
+            # 1. Arrival - OK
+            base = get_truck_base_arrival(t_id, tr_idx, pos)
+            arrival = base['arrival']
+            
+            truck = next(t for t in self.trucks if t.truck_id == t_id)
+            cid = truck.trips[tr_idx].route[pos]
+            
+            # Depot processing - OK
+            if cid == 0:
+                # Nếu là đầu trip (pos=0), cần Loading Time & Wait for Package Ready Time
+                process_duration = TRUCK_RECEIVE_TIME * (1 if pos == 0 else 0)
+                
+                start_time = arrival
+                
+                # Check package ready time for this trip
+                if pos == 0:
+                    trip = truck.trips[tr_idx]
+                    trip_customers = trip.customers()
+                    max_ready = 0
+                    
+                    for c_id in trip_customers:
+                         customer = self.problem.get_customer(c_id)
+                         # Chỉ quan tâm C1 (D) được load từ depot cho trip này
+                         if customer.ctype == CustomerType.D:
+                             # Check xem có bị drone resupply khoong?
+                             # resupply_map key: (truck_id, trip_idx, pos_of_customer)
+                             # c_id nam o dau trong trip?
+                             c_pos = trip.route.index(c_id)
+                             if (t_id, tr_idx, c_pos) not in resupply_map:
+                                 max_ready = max(max_ready, customer.ready_time)
+                    
+                    start_time = max(arrival, max_ready)
+
+                service_start = start_time
+                service_end = service_start + process_duration
+                departure = service_end
+                
+                res = {
+                    'arrival': arrival,
+                    'service_start': service_start,
+                    'service_end': service_end,
+                    'resupply_start': None,
+                    'resupply_end': None,
+                    'departure': departure
+                }
+                memo_truck[(t_id, tr_idx, pos)] = res
+                visiting.remove(state_key)
+                return res
+
+            # Khách hàng
+            resupply_mission_key = resupply_map.get((t_id, tr_idx, pos))
+            service_duration = TRUCK_SERVICE_TIME
+            
+            if not resupply_mission_key:
+                # OK
+                # Không phải gói hàng Resupply: Arrive -> Service -> Depart
+                service_start = arrival
+                service_end = arrival + service_duration
+                departure = service_end
+                res = {
+                    'arrival': arrival,
+                    'service_start': service_start,
+                    'service_end': service_end,
+                    'resupply_start': None,
+                    'resupply_end': None,
+                    'departure': departure
+                }
+            else:
+                # Có resupply
+                d_id, m_idx = resupply_mission_key
+                drone_times = get_drone_times(d_id, m_idx) # Trigger wait for drone
+                
+                drone_mission = next(d for d in self.drones if d.drone_id == d_id).missions[m_idx]
+                is_needed_now = (cid in drone_mission.packages) # Gói hàng này có trong chuyến resupply không ?
+                
+                
+                if is_needed_now:
+                    # OK
+                    # Nếu có thì resupply trước rồi mới giao
+                    # RESUPPLY FIRST: Ack start_transfer calculated in Drone
+                    resupply_start = drone_times['start_transfer']
+                    resupply_end = drone_times['finish_transfer']
+                    
+                    service_start = resupply_end
+                    service_end = service_start + service_duration
+                    departure = service_end
+                    
+                    res = {
+                        'arrival': arrival,
+                        'resupply_start': resupply_start,
+                        'resupply_end': resupply_end,
+                        'service_start': service_start,
+                        'service_end': service_end,
+                        'departure': departure
+                    }
+                else:
+                    # OK
+                    # Giao trước rồi mới nhận resupply
+                    # SERVICE FIRST
+                    service_start = arrival
+                    service_end = service_start + service_duration
+                    
+                    resupply_start = drone_times['start_transfer']
+                    resupply_end = drone_times['finish_transfer']
+                    departure = resupply_end
+                    
+                    res = {
+                        'arrival': arrival,
+                        'service_start': service_start,
+                        'service_end': service_end,
+                        'resupply_start': resupply_start,
+                        'resupply_end': resupply_end,
+                        'departure': departure
+                    }
+
+            memo_truck[(t_id, tr_idx, pos)] = res
+            visiting.remove(state_key)
+            return res
+
+        # 4. Starting Points
+        for truck in self.trucks:
+            if truck.trips:
+                last_trip_idx = len(truck.trips) - 1
+                last_trip = truck.trips[-1]
+                if last_trip.route:
+                    get_truck_full_node(truck.truck_id, last_trip_idx, len(last_trip.route) - 1)
+        
+        for drone in self.drones:
+            if drone.missions:
+                get_drone_times(drone.drone_id, len(drone.missions) - 1)
+
+        return memo_truck, memo_drone, violations
 
     def calculate_makespan(self) -> float:
         """Tính makespan (thời gian hoàn thành tất cả)"""
         if self._makespan is not None:
-            return self._makespan
+             return self._makespan
 
-        truck_times = [self.calculate_truck_time(t) for t in self.trucks]
-        drone_times = [self.calculate_drone_time(d) for d in self.drones]
+        truck_times, drone_times, _ = self.calculate_timestamps()
+        
+        max_time = 0.0
+        for t_info in truck_times.values():
+            max_time = max(max_time, t_info['departure'])
+        for d_info in drone_times.values():
+            max_time = max(max_time, d_info['return_depot'])
+            
+        self._makespan = max_time
+        return max_time
 
-        max_truck = max(truck_times) if truck_times else 0
-        max_drone = max(drone_times) if drone_times else 0
-
-        self._makespan = max(max_truck, max_drone)
-        return self._makespan
-
-    # ========== DISPLAY ==========
+        # ========== DISPLAY ==========
     def print_solution(self):
         """In lời giải chi tiết"""
-        print("=" * 60)
-        print("                    SOLUTION                    ")
-        print("=" * 60)
+        truck_map, drone_map, violations = self.calculate_timestamps()
+        makespan = self.calculate_makespan()
+        
+        print("=" * 100)
+        print(f"{'SOLUTION DETAIL':^100}")
+        print("=" * 100)
 
         # Truck routes
         for truck in self.trucks:
-            print(f"\n{'─' * 60}")
-            print(f"TRUCK {truck.truck_id}:")
-            print(f"{'─' * 60}")
+            print(f"\nTRUCK {truck.truck_id}:")
+            print(f"{'Trip':<5} | {'Event':<25} | {'Loc':<6} | {'Arrive':<8} | {'Service/Resupply':<35} | {'Depart':<8}")
+            print("-" * 100)
+            
             for t_idx, trip in enumerate(truck.trips):
-                customers = trip.customers()
-                if customers:
-                    customer_details = []
-                    for cid in customers:
-                        c = self.problem.get_customer(cid)
-                        customer_details.append(f"{cid}({c.ctype.value})")
-                    print(f"  Trip {t_idx}: {' → '.join(['depot'] + customer_details + ['depot'])}")
-                else:
-                    print(f"  Trip {t_idx}: [empty]")
-            print(f"  Time: {self.calculate_truck_time(truck):.2f} min")
+                for pos, cid in enumerate(trip.route):
+                    info = truck_map.get((truck.truck_id, t_idx, pos), {})
+                    if not info: continue
+                    
+                    c_type = "Depot"
+                    if cid != 0:
+                        c_type = self.problem.get_customer(cid).ctype.value
+                    
+                    time_s = f"{info['arrival']:.1f}"
+                    time_e = f"{info['departure']:.1f}"
+                    
+                    details = []
+                    if info.get('service_start') is not None and cid != 0:
+                        details.append(f"Srv:{info['service_start']:.1f}-{info['service_end']:.1f}")
+                    elif cid == 0 and info.get('service_end') > info.get('service_start'):
+                        details.append(f"Load:{info['service_start']:.1f}-{info['service_end']:.1f}")
+
+                    if info.get('resupply_start') is not None:
+                        details.append(f"Rsp:{info['resupply_start']:.1f}-{info['resupply_end']:.1f}")
+                        
+                    note = " | ".join(details)
+                    print(f"{t_idx:<5} | {c_type:<25} | {cid:<6} | {time_s:<8} | {note:<35} | {time_e:<8}")
 
         # Drone routes
         for drone in self.drones:
-            print(f"\n{'─' * 60}")
-            print(f"DRONE {drone.drone_id}:")
-            print(f"{'─' * 60}")
-            if drone.missions:
-                for m_idx, mission in enumerate(drone.missions):
-                    print(f"  Mission {m_idx}:")
-                    print(f"    Route: depot → customer {mission.meet_point} → depot")
-                    print(f"    Resupply to Truck: {mission.truck_id}")
-                    print(f"    Packages: {mission.packages}")
-                print(f"  Time: {self.calculate_drone_time(drone):.2f} min")
-            else:
-                print("  No missions")
+            print(f"\nDRONE {drone.drone_id}:")
+            print(f"{'Msn':<5} | {'Meet':<6} | {'Pkgs':<10} | {'Load@Depot':<18} | {'Arrive Meet':<12} | {'Transfer':<18} | {'Return':<8} | {'Flight':<8}")
+            print("-" * 100)
+            
+            for m_idx, mission in enumerate(drone.missions):
+                info = drone_map.get((drone.drone_id, m_idx), {})
+                if not info: continue
+                
+                pkgs = str(mission.packages)
+                print(f"{m_idx:<5} | {mission.meet_point:<6} | {pkgs:<10} | "
+                      f"{info['start_load']:.1f}-{info['depart_depot']:.1f}          | "
+                      f"{info['arrive_meet']:.1f}         | "
+                      f"{info['start_transfer']:.1f}-{info['finish_transfer']:.1f}          | "
+                      f"{info['return_depot']:.1f}     | "
+                      f"{info['flight_time']:.1f}")
 
         # Summary
-        print(f"\n{'=' * 60}")
-        print("SUMMARY")
-        print(f"{'=' * 60}")
-        print(f"Makespan: {self.calculate_makespan():.2f} min")
-
-        feasible, violations = self.is_feasible()
-        print(f"Feasible: {'Yes' if feasible else 'No'}")
-        if violations:
+        print(f"\n{'=' * 100}")
+        print("SUMMARY STATUS")
+        print(f"Makespan: {makespan:.2f} min")
+        
+        feasible, logic_violations = self.is_feasible()
+        all_violations = logic_violations + violations
+        
+        print(f"Feasible: {'Yes' if feasible and not violations else 'No'}")
+        if all_violations:
             print("\nViolations:")
-            for v in violations:
+            for v in all_violations:
                 print(f"  - {v}")
-        print(f"{'=' * 60}")
+        print(f"{'=' * 100}")
 
 
 # ==================== DATA LOADER ====================

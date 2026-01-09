@@ -16,6 +16,7 @@ class NeighborhoodGenerator:
     def __init__(self, problem):
         self.problem = problem
 
+    # OK
     def get_relocate_moves(self, solution: Solution) -> List[Tuple[str, int, int, int, int, int, int]]:
         """
         Sinh các move Relocate: Di chuyển khách hàng từ (t1, trip1, pos1) sang (t2, trip2, pos2)
@@ -33,10 +34,7 @@ class NeighborhoodGenerator:
                         customer_positions.append((t_idx, tr_idx, pos))
 
         # Thử di chuyển mỗi khách hàng đến một vị trí mới
-        # Để giảm không gian tìm kiếm, ta có thể chỉ thử các vị trí "gần" hoặc ngẫu nhiên
-        # Ở đây ta implement vét cạn nhưng có giới hạn (sample) nếu quá lớn
-        
-        sample_size = 50 # Giới hạn số lượng move check mỗi vòng để đảm bảo hiệu năng
+        # Giới hạn số lượng move check mỗi vòng để đảm bảo hiệu năng
         selected_positions = customer_positions
         if len(customer_positions) > 20:
              import random
@@ -46,8 +44,7 @@ class NeighborhoodGenerator:
             cid = trucks[t1_idx].trips[tr1_idx].route[pos1]
             customer = self.problem.get_customer(cid)
             
-            # Nếu là C2, logic phức tạp hơn (phải move cả cặp hoặc check ràng buộc), 
-            # tạm thời skip C2 trong Relocate đơn giản này để tránh lỗi
+            # Nếu là C2, logic phức tạp hơn (phải move cả cặp hoặc check ràng buộc) => tạm thời skip C2
             if customer.ctype in [CustomerType.P, CustomerType.DL]:
                 continue
 
@@ -69,6 +66,7 @@ class NeighborhoodGenerator:
         
         return moves
 
+   # OK
     def get_swap_moves(self, solution: Solution) -> List[Tuple[str, int, int, int, int, int, int]]:
         """
         Sinh các move Swap: Hoán đổi khách hàng tại (t1, tr1, p1) và (t2, tr2, p2)
@@ -102,7 +100,7 @@ class NeighborhoodGenerator:
             cust1 = self.problem.get_customer(c1)
             cust2 = self.problem.get_customer(c2)
             
-            # Skip C2 for simplicity in this version
+            # Skip C2 để giảm độ phức tạp
             if cust1.ctype in [CustomerType.P, CustomerType.DL] or \
                cust2.ctype in [CustomerType.P, CustomerType.DL]:
                continue
@@ -127,8 +125,7 @@ class NeighborhoodGenerator:
             cid = trip1.route[p1]
             
             # Xóa khỏi vị trí cũ
-            # Lưu ý: Nếu t1==t2 và tr1==tr2, index có thể thay đổi sau khi xóa
-            # Nên xử lý cẩn thận
+            # Nếu t1==t2 và tr1==tr2 (cùng 1 trip cùng 1 xe), index có thể thay đổi sau khi xóa
             
             if t1 == t2 and tr1 == tr2:
                 # Di chuyển trong cùng trip
@@ -156,40 +153,87 @@ class NeighborhoodGenerator:
             truck1.trips[tr1].route[p1] = c2
             truck2.trips[tr2].route[p2] = c1
             
-        # Clear cache because solution changed
+        # Do solution đã thay đổi nên cần xóa các thông tin cũ (is_feasible, makespan)
         new_sol.invalidate_cache()
         
         # Quan trọng: Khi thay đổi route truck, các Drone Mission trỏ đến meet_point cũ 
         # có thể bị invalid (ví dụ: meet_point không còn nằm trên truck đó nữa, hoặc sai thứ tự).
-        # Để đơn giản hóa, ta sẽ KÊU gïoi hàm sửa chữa Drone (hoặc reset drone assignment)
-        # Trong phiên bản này, ta sẽ KHÔNG thay đổi Drone Assignment, nhưng cần kiểm tra xem 
-        # meet_point còn tồn tại trên truck cũ không. Nếu customer bị move đi truck khác, 
-        # mission đó sẽ fail check_capacity (ko tìm thấy meet point).
+        # Ta sẽ sử dụng hàm sửa chữa Drone để khắc phục vấn đề này
+        # Không thay đổi Drone Assignment, nhưng cần kiểm tra xem meet_point còn tồn tại trên truck cũ không.
+        # Nếu customer bị move đi truck khác, mission đó sẽ fail check_capacity (ko tìm thấy meet point).
         # -> Cần cập nhật lại truck_id trong mission nếu meet_point bị di chuyển qua truck khác.
-        
         self._update_drone_missions(new_sol)
         
         return new_sol
         
     def _update_drone_missions(self, solution: Solution):
         """
-        Cập nhật lại truck_id cho các mission nếu meet_point bị dời sang truck khác
+        Cập nhật lại các mission của drone khi lộ trình xe tải thay đổi:
+        1. Duyệt từng gói hàng trong mission, nếu địa chỉ (truck, trip) thay đổi -> Xóa khỏi mission.
+        2. Cập nhật lại meet_point = khách hàng xuất hiện sớm nhất trong số các gói hàng còn lại.
         """
-        # Map customer -> truck_id
-        cust_to_truck = {}
+        # 1. Map customer -> (truck_id, trip_idx, pos)
+        cust_locs = {}
         for truck in solution.trucks:
-            for trip in truck.trips:
-                for cid in trip.customers():
-                    cust_to_truck[cid] = truck.truck_id
-                    
+            for t_idx, trip in enumerate(truck.trips):
+                for pos, cid in enumerate(trip.route):
+                    if cid != 0:
+                        cust_locs[cid] = (truck.truck_id, t_idx, pos)
+
         for drone in solution.drones:
             for mission in drone.missions:
-                if mission.meet_point in cust_to_truck:
-                    new_truck = cust_to_truck[mission.meet_point]
-                    if mission.truck_id != new_truck:
-                        mission.truck_id = new_truck
-                        # Note: Vi trí cụ thể trong route đã thay đổi, 
-                        # nhưng calculate_timestamps sẽ tự tìm lại dựa trên meet_point ID.
+                if not mission.packages:
+                    continue
+
+                # Xác định "Anchor" (Truck, Trip) cho mission này.
+                # Gom nhóm các gói hàng theo (Truck, Trip)
+                # target_addr -> count
+                addr_counts = {} 
+                
+                for pkg in mission.packages:
+                    if pkg in cust_locs:
+                        tid, tr_idx, _ = cust_locs[pkg]
+                        key = (tid, tr_idx)
+                        addr_counts[key] = addr_counts.get(key, 0) + 1
+                
+                if not addr_counts:
+                    # Tất cả packages biến mất? (không thể xảy ra nếu Relocate/Swap đúng)
+                    mission.packages = []
+                    continue
+                    
+                # Chọn nhóm địa chỉ phổ biến nhất (Major Vote)
+                # Để đảm bảo mission đi theo đa số các gói hàng
+                target_tid, target_tr_idx = max(addr_counts, key=addr_counts.get)
+                
+                # Lọc packages: Chỉ giữ lại gói hàng nằm đúng địa chỉ target
+                valid_packages = []
+                for pkg in mission.packages:
+                    if pkg in cust_locs:
+                        tid, tr_idx, _ = cust_locs[pkg]
+                        if tid == target_tid and tr_idx == target_tr_idx:
+                            valid_packages.append(pkg)
+                
+                mission.packages = valid_packages
+                
+                if not mission.packages:
+                    continue
+                
+                # Cập nhật thông tin Truck cho mission
+                mission.truck_id = target_tid
+                    
+                # 3. Chọn meet point mới theo khách hàng xuất hiện sớm nhất trong lộ trình mới
+                earliest_pkg = None
+                min_pos = float('inf')
+                
+                for pkg in mission.packages:
+                    # Chắc chắn pkg trong cust_locs và đúng truck/trip
+                    _, _, pos = cust_locs[pkg]
+                    if pos < min_pos:
+                        min_pos = pos
+                        earliest_pkg = pkg
+                
+                if earliest_pkg is not None:
+                    mission.meet_point = earliest_pkg
 
 
 class TabuSearch:
@@ -207,10 +251,6 @@ class TabuSearch:
         move_type = move[0]
         if move_type == 'relocate':
             # move: ('relocate', t1, tr1, p1, t2, tr2, p2)
-            # Find customer ID involved requires extracting from current solution BEFORE move
-            # This is hard inside solve loop without context.
-            # Simplified: Store full move tuple as tabu? No, too specific.
-            # Store strict reversal?
             return tuple(move)
         elif move_type == 'swap':
             return tuple(move)

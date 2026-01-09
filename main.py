@@ -238,7 +238,7 @@ def main():
     print("\n[Step 4] Running Tabu Search Optimization...")
     from optimization import TabuSearch
     tabu = TabuSearch(problem, solution)
-    optimized_solution = tabu.solve(max_iterations=100, tabu_tenure=10)
+    optimized_solution = tabu.solve(max_iterations=200, tabu_tenure=15)
 
     print("\n[Step 5] Optimized Solution details:")
     optimized_solution.print_solution()

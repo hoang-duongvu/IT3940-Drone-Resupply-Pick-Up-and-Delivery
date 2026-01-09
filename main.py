@@ -215,7 +215,6 @@ def visualize_solution(solution, filename="solution.svg"):
         import traceback
         traceback.print_exc()
 
-
 def main():
     # Đường dẫn file dữ liệu
     data_file = "./data/10_instances/U_10_0.5_Num_1.txt"

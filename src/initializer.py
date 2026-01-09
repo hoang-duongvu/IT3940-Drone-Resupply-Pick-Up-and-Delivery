@@ -64,6 +64,21 @@ class SolutionInitializer:
 
         return Solution(trucks=trucks, drones=drones, problem=self.problem)
 
+    def initialize4bench(self) -> Solution:
+        # Bước 1: Cluster khách hàng
+        clusters = self._cluster_customers()
+
+        # Bước 2 & 3: Tạo route cho mỗi truck
+        trucks = []
+        for truck_id in range(NUM_TRUCKS):
+            customer_ids = clusters.get(truck_id, [])
+            truck_route = self._build_truck_route(truck_id, customer_ids)
+            trucks.append(truck_route)
+
+        # Bước 4: Xác định drone resupply
+        drones = self._assign_drone_resupply(trucks)
+        return Solution(trucks=trucks, drones=drones, problem=self.problem)
+
     # OK
     def _cluster_customers(self) -> Dict[int, List[int]]:
         """

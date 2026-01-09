@@ -459,3 +459,94 @@ class TabuSearch:
                 
         print(f"[TabuSearch] Finished. Final Makespan: {best_makespan:.2f}")
         return self.best_solution
+
+    def solve4bench(self, max_iterations=50, tabu_tenure=10):
+        iteration = 0
+        best_makespan = self.best_solution.calculate_makespan()
+        
+        # Initial validation
+        valid, violations = self.best_solution.is_feasible()
+        if not valid:
+            print(f"[TabuSearch] WARNING: Initial solution is infeasible! {violations[:2]}...")
+            best_makespan = float('inf')
+
+        while iteration < max_iterations:
+            iteration += 1
+            
+            # 1. Generate Neighborhood with Ratios
+            # User request: 60% Relocate, 30% Swap, 5% Add Drone, 5% Remove Drone
+            # Assumed batch size: 100 candidates per iteration
+            BATCH_SIZE = 100
+            
+            moves_relocate = self.neighborhood.get_relocate_moves(self.current_solution)
+            moves_swap = self.neighborhood.get_swap_moves(self.current_solution)
+            moves_add = self.neighborhood.get_add_drone_package_moves(self.current_solution)
+            moves_remove = self.neighborhood.get_remove_drone_package_moves(self.current_solution)
+            
+            import random
+            
+            # Helper to sample
+            def sample_moves(moves, count):
+                if len(moves) > count:
+                    return random.sample(moves, count)
+                return moves
+
+            candidates = []
+            candidates.extend(sample_moves(moves_relocate, int(BATCH_SIZE * 0.60)))
+            candidates.extend(sample_moves(moves_swap, int(BATCH_SIZE * 0.30)))
+            candidates.extend(sample_moves(moves_add, int(BATCH_SIZE * 0.05)))
+            candidates.extend(sample_moves(moves_remove, int(BATCH_SIZE * 0.05)))
+            
+            # 2. Evaluate Candidates
+            best_move = None
+            best_move_makespan = float('inf')
+            best_move_sol = None
+            
+
+            
+            for move in candidates:
+                # Apply move
+                neighbor_sol = self.neighborhood.apply_move(self.current_solution, move)
+                
+                # Check feasibility
+                is_feasible, _ = neighbor_sol.is_feasible()
+                if not is_feasible:
+                    continue
+                    
+                makespan = neighbor_sol.calculate_makespan()
+                
+                # Check Tabu & Aspiration
+                move_sig = self.get_move_signature(move)
+                is_tabu = False
+                if move_sig in self.tabu_list:
+                    if self.tabu_list[move_sig] > iteration:
+                        is_tabu = True
+                
+                # Aspiration: Nếu tốt hơn Global Best -> override tabu
+                if is_tabu and makespan < best_makespan:
+                    is_tabu = False
+                    
+                if not is_tabu:
+                    if makespan < best_move_makespan:
+                        best_move_makespan = makespan
+                        best_move = move
+                        best_move_sol = neighbor_sol
+            
+            # 3. Apply Best Move
+            if best_move:
+                self.current_solution = best_move_sol
+                
+                # Update Best Global
+                if best_move_makespan < best_makespan:
+                    self.best_solution = best_move_sol.copy()
+                    best_makespan = best_move_makespan
+                
+                # Update Tabu List
+                # Add REVERSE move to tabu
+                # Simple implementation: Add applied move to tabu (to prevent immediate undo if we treated it as "current state is tabu")
+                # Better: Forbidden to return to previous state.
+                self.tabu_list[self.get_move_signature(best_move)] = iteration + tabu_tenure
+            else:
+                break
+            
+        return self.best_solution

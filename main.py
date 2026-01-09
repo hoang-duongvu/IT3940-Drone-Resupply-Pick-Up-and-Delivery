@@ -1,5 +1,9 @@
 import sys
 import os
+import random
+
+# Set seed for reproducibility
+random.seed(65)
 
 # Thêm thư mục src vào path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
@@ -238,7 +242,7 @@ def main():
     print("\n[Step 4] Running Tabu Search Optimization...")
     from optimization import TabuSearch
     tabu = TabuSearch(problem, solution)
-    optimized_solution = tabu.solve(max_iterations=200, tabu_tenure=15)
+    optimized_solution = tabu.solve(max_iterations=300, tabu_tenure=20)
 
     print("\n[Step 5] Optimized Solution details:")
     optimized_solution.print_solution()
@@ -246,9 +250,6 @@ def main():
     # 5. Visualize (optional)
     print("\n[Step 6] Visualization...")
     visualize_solution(optimized_solution)
-
-    return optimized_solution
-
 
 if __name__ == "__main__":
     solution = main()

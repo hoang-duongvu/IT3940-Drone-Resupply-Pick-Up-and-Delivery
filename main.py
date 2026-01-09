@@ -8,7 +8,7 @@ random.seed(65)
 # Thêm thư mục src vào path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-from models import load_problem, CustomerType
+from models import load_problem, load_problem_no_C2, CustomerType
 from initializer import SolutionInitializer
 
 
@@ -218,7 +218,7 @@ def visualize_solution(solution, filename="solution.svg"):
 
 def main():
     # Đường dẫn file dữ liệu
-    data_file = "./data/test.txt"
+    data_file = "./data/10_instances/U_10_0.5_Num_1.txt"
 
     print("\n" + "=" * 60)
     print("   DRONE RESUPPLY PICK-UP DELIVERY - SOLUTION INITIALIZER")
@@ -226,7 +226,7 @@ def main():
 
     # 1. Load problem
     print(f"\n[Step 1] Loading problem from: {data_file}")
-    problem = load_problem(data_file)
+    problem = load_problem_no_C2(data_file)
     print_problem_info(problem)
 
     # 2. Initialize solution

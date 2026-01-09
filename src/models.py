@@ -532,7 +532,15 @@ class Solution:
             
             if not truck_resinfo:
                  visiting.remove(state_key)
-                 return {} 
+                 # Mission orphaned (cannot find meet point on truck)
+                 # Return heavy penalty to avoid this state
+                 return {
+                     'ready_at_depot': float('inf'),
+                     'return_depot': float('inf'),
+                     'start_transfer': float('inf'),
+                     'finish_transfer': float('inf'),
+                     'flight_time': float('inf')
+                 } 
             
             tr_id, tr_idx, tr_pos = truck_resinfo
             
@@ -878,6 +886,64 @@ def load_problem(filepath: str) -> Problem:
     for pair_id, pair_data in c2_pairs_dict.items():
         if 'P' in pair_data and 'DL' in pair_data:
             c2_pairs.append((pair_data['P'], pair_data['DL']))
+
+    return Problem(
+        customers=customers,
+        c1_customers=c1_customers,
+        c2_pairs=c2_pairs
+    )
+
+def load_problem_no_C2(filepath: str) -> Problem:
+    """
+    Đọc dữ liệu từ file không có C2
+    Format: ri    X    Y
+    Mỗi dòng là một khách hàng C1 (D)
+    """
+    customers = {}
+    c1_customers = []
+    c2_pairs = []
+
+    with open(filepath, 'r') as f:
+        lines = f.readlines()
+        
+    start_idx = 0
+    # Check header
+    if lines and 'ri' in lines[0] and 'X' in lines[0]:
+        start_idx = 1
+        
+    cid_counter = 1
+    
+    for line in lines[start_idx:]:
+        line = line.strip()
+        if not line:
+            continue
+            
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+            
+        # Format: ri  X  Y
+        try:
+            ready_time = float(parts[0])
+            x = float(parts[1])
+            y = float(parts[2])
+            
+            customer = Customer(
+                id=cid_counter,
+                x=x,
+                y=y,
+                ctype=CustomerType.D,
+                ready_time=ready_time,
+                pair_id=0,
+                weight=1
+            )
+            
+            customers[cid_counter] = customer
+            c1_customers.append(cid_counter)
+            cid_counter += 1
+            
+        except ValueError:
+            continue
 
     return Problem(
         customers=customers,

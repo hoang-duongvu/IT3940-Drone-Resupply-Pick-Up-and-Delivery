@@ -446,7 +446,7 @@ class Solution:
         self._is_feasible = feasible
         return feasible, all_violations
 
-    # ========== MAKESPAN CALCULATION (GRAPH BASED) ==========
+    # ========== MAKESPAN CALCULATION ==========
     def calculate_timestamps(self) -> Tuple[Dict, Dict, List[str]]:
         """
         Tính toán mốc thời gian chi tiết cho toàn bộ hệ thống (Truck & Drone).
@@ -767,6 +767,7 @@ class Solution:
         return max_time
 
         # ========== DISPLAY ==========
+  
     def print_solution(self):
         """In lời giải chi tiết"""
         truck_map, drone_map, violations = self.calculate_timestamps()

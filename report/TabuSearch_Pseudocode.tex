@@ -1,0 +1,68 @@
+\begin{algorithm}
+\caption{Tabu Search Algorithm for VRP}
+\label{alg:tabu_search}
+\begin{algorithmic}[1]
+\Require Initial Solution $S_{init}$, Max Iterations $I_{max}$, Tabu Tenure $T_{tenure}$
+\Ensure Best Solution $S_{best}$
+
+\State $S_{current} \gets S_{init}$
+\State $S_{best} \gets S_{init}$
+\State $f_{best} \gets \Call{CalculateMakespan}{S_{best}}$
+\State $TabuList \gets \emptyset$
+\State $iter \gets 0$
+
+\While{$iter < I_{max}$}
+    \State $iter \gets iter + 1$
+    \State $Moves \gets \emptyset$
+    \State \Comment{Generate Neighborhood with specified ratios}
+    \State $M_{relocate} \gets \Call{GetRelocateMoves}{S_{current}}$
+    \State $M_{swap} \gets \Call{GetSwapMoves}{S_{current}}$
+    \State $M_{add} \gets \Call{GetAddDroneMoves}{S_{current}}$
+    \State $M_{remove} \gets \Call{GetRemoveDroneMoves}{S_{current}}$
+    
+    \State $Moves \gets Moves \cup \Call{Sample}{M_{relocate}, 60\%}$
+    \State $Moves \gets Moves \cup \Call{Sample}{M_{swap}, 30\%}$
+    \State $Moves \gets Moves \cup \Call{Sample}{M_{add}, 5\%}$
+    \State $Moves \gets Moves \cup \Call{Sample}{M_{remove}, 5\%}$
+    
+    \State $BestMove \gets \textbf{null}$
+    \State $f_{local\_best} \gets \infty$
+    
+    \For{\textbf{each} $move \in Moves$}
+        \State $S_{neighbor} \gets \Call{ApplyMove}{S_{current}, move}$
+        
+        \If{\textbf{not} \Call{IsFeasible}{S_{neighbor}}}
+            \State \textbf{continue}
+        \EndIf
+
+        \State $f_{neighbor} \gets \Call{CalculateMakespan}{S_{neighbor}}$
+        \State $is\_tabu \gets (move \in TabuList \textbf{ and } TabuList[move] > iter)$
+        
+        \Comment{Aspiration Criterion: Override tabu if better than global best}
+        \If{$is\_tabu \textbf{ and } f_{neighbor} < f_{best}$}
+            \State $is\_tabu \gets \textbf{false}$
+        \EndIf
+        
+        \If{\textbf{not} $is\_tabu \textbf{ and } f_{neighbor} < f_{local\_best}$}
+            \State $f_{local\_best} \gets f_{neighbor}$
+            \State $BestMove \gets move$
+            \State $S_{next} \gets S_{neighbor}$
+        \EndIf
+    \EndFor
+    
+    \If{$BestMove \neq \textbf{null}$}
+        \State $S_{current} \gets S_{next}$
+        \State $TabuList[BestMove] \gets iter + T_{tenure}$
+        
+        \If{$f_{local\_best} < f_{best}$}
+            \State $S_{best} \gets S_{next}$
+            \State $f_{best} \gets f_{local\_best}$
+        \EndIf
+    \Else
+        \State \textbf{break} \Comment{No valid moves found}
+    \EndIf
+\EndWhile
+
+\State \Return $S_{best}$
+\end{algorithmic}
+\end{algorithm}

@@ -89,7 +89,7 @@ def run_benchmark(data_dir: str):
 
         # Save to CSV
         import csv
-        output_file = "benchmark_results.csv"
+        output_file = "./data/sample_output/benchmark_results.csv"
         with open(output_file, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=['Instance', 'Init Makespan', 'Best Makespan', 'Gap (%)', 'Time (s)'])
             writer.writeheader()

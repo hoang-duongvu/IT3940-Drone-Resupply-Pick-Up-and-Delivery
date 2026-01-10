@@ -217,7 +217,7 @@ def visualize_solution(solution, filename="solution.svg"):
 
 def main():
     # Đường dẫn file dữ liệu
-    data_file = "./data/10_instances/U_10_0.5_Num_1.txt"
+    data_file = "./data/10_instances/U_10_1.5_Num_3.txt"
 
     print("\n" + "=" * 60)
     print("   DRONE RESUPPLY PICK-UP DELIVERY - SOLUTION INITIALIZER")
@@ -225,7 +225,7 @@ def main():
 
     # 1. Load problem
     print(f"\n[Step 1] Loading problem from: {data_file}")
-    problem = load_problem_no_C2(data_file)
+    problem = load_problem(data_file)
     print_problem_info(problem)
 
     # 2. Initialize solution
@@ -241,7 +241,7 @@ def main():
     print("\n[Step 4] Running Tabu Search Optimization...")
     from optimization import TabuSearch
     tabu = TabuSearch(problem, solution)
-    optimized_solution = tabu.solve(max_iterations=300, tabu_tenure=20)
+    optimized_solution = tabu.solve(max_iterations=200, tabu_tenure=20)
 
     print("\n[Step 5] Optimized Solution details:")
     optimized_solution.print_solution()

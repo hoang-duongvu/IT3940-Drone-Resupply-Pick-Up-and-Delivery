@@ -343,9 +343,6 @@ class TabuSearch:
         self.tabu_list = {} # Key: move_signature, Value: expiry_iteration
         
     def get_move_signature(self, move):
-    # Tạo signature để định danh move trong tabu list
-    # Ví dụ: Relocate C1 từ T1 -> T2. Tabu reversal: C1 từ T2 -> T1.
-    # Ở đây đơn giản hóa: cấm di chuyển Customer C1 trong X iters.
         move_type = move[0]
         if move_type == 'relocate':
             return tuple(move)
@@ -446,14 +443,8 @@ class TabuSearch:
                     # Log progress occasionally
                     if iteration % 10 == 0:
                         print(f"[TabuSearch] Iter {iteration}: Best Move {best_move_makespan:.2f} (Global Best: {best_makespan:.2f})")
-                
-                # Update Tabu List
-                # Add REVERSE move to tabu
-                # Simple implementation: Add applied move to tabu (to prevent immediate undo if we treated it as "current state is tabu")
-                # Better: Forbidden to return to previous state.
                 self.tabu_list[self.get_move_signature(best_move)] = iteration + tabu_tenure
             else:
-                # No valid move found (Stuck)
                 print(f"[TabuSearch] Iter {iteration}: No valid non-tabu moves found.")
                 break
                 

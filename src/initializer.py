@@ -86,7 +86,6 @@ class SolutionInitializer:
         solution = self._repair_drone_missions(solution)
         return solution
 
-    # OK
     def _cluster_customers(self) -> Dict[int, List[int]]:
         """
         Cluster khách hàng theo vị trí địa lý
@@ -120,7 +119,6 @@ class SolutionInitializer:
 
         return clusters
 
-    # OK
     def _fix_c2_pairs_cluster(self, clusters: Dict[int, List[int]]) -> Dict[int, List[int]]:
         """Đảm bảo pickup và delivery của cặp C2 cùng cluster"""
         for pickup_id, delivery_id in self.problem.c2_pairs:
@@ -142,7 +140,6 @@ class SolutionInitializer:
 
         return clusters
 
-    # OK
     def _build_truck_route(self, truck_id: int, customer_ids: List[int]) -> TruckRoute:
         """
         Xây dựng route cho truck bằng nearest neighbor
@@ -289,7 +286,6 @@ class SolutionInitializer:
 
         return truck
 
-    # OK
     def _calculate_load_at_end(self, trip: Trip, d_load: int) -> int:
         """
         Tính load tại cuối route hiện tại
@@ -312,7 +308,6 @@ class SolutionInitializer:
 
         return current_load
 
-    # OK
     def _assign_drone_resupply(self, trucks: List[TruckRoute]) -> List[DroneRoute]:
         """
         Xác định packages cần drone resupply

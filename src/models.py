@@ -446,7 +446,7 @@ class Solution:
         self._is_feasible = feasible
         return feasible, all_violations
 
-    # ========== MAKESPAN CALCULATION ==========
+    #========== MAKESPAN CALCULATION ==========
     def calculate_timestamps(self) -> Tuple[Dict, Dict, List[str]]:
         """
         Tính toán mốc thời gian chi tiết cho toàn bộ hệ thống (Truck & Drone).

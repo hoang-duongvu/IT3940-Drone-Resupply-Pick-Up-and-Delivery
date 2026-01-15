@@ -217,7 +217,11 @@ def visualize_solution(solution, filename="solution.svg"):
 
 def main():
     # Đường dẫn file dữ liệu
-    data_file = "./data/10_instances/U_10_1.5_Num_3.txt"
+    import argparse
+    parser = argparse.ArgumentParser(description='Drone Resupply VRP')
+    parser.add_argument('--input', type=str, default="./data/test.txt", help='Path to input data file')
+    args = parser.parse_args()
+    data_file = args.input
 
     print("\n" + "=" * 60)
     print("   DRONE RESUPPLY PICK-UP DELIVERY - SOLUTION INITIALIZER")

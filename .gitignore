@@ -1,1 +1,3 @@
-data
+/data/*_instances
+/data/Instances
+/report

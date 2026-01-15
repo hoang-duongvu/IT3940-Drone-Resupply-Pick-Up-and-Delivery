@@ -13,7 +13,7 @@ from initializer import SolutionInitializer
 from optimization import TabuSearch
 from config import print_config
 
-def run_benchmark(data_dir: str):
+def run_benchmark(data_dir: str, output_file: str):
     """
     Run benchmark on all .txt files in data_dir
     """
@@ -89,7 +89,6 @@ def run_benchmark(data_dir: str):
 
         # Save to CSV
         import csv
-        output_file = "./data/sample_output/benchmark_results.csv"
         with open(output_file, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=['Instance', 'Init Makespan', 'Best Makespan', 'Gap (%)', 'Time (s)'])
             writer.writeheader()
@@ -97,5 +96,6 @@ def run_benchmark(data_dir: str):
         print(f"\nResults saved to {output_file}")
 
 if __name__ == "__main__":
-    data_folder = "./data/10_instances"
-    run_benchmark(data_folder)
+    data_folder = "./data/15_20_instances"
+    output_file = "./data/sample_output/benchmark_results_15_20.csv"
+    run_benchmark(data_folder, output_file)

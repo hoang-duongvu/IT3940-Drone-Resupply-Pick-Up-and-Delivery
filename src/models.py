@@ -505,6 +505,7 @@ class Solution:
                 ready_at_depot = 0.0
             else:
                 prev_mission = get_drone_times(d_id, m_idx - 1)
+                if prev_mission is None: return None
                 ready_at_depot = prev_mission['return_depot']
 
             # Ràng buộc: ready_time của packages - OK
@@ -689,6 +690,16 @@ class Solution:
                 d_id, m_idx = resupply_mission_key
                 drone_times = get_drone_times(d_id, m_idx) # Trigger wait for drone
                 
+                if drone_times is None:
+                    return {
+                        'arrival': arrival,
+                        'service_start': float('inf'),
+                        'service_end': float('inf'),
+                        'resupply_start': float('inf'),
+                        'resupply_end': float('inf'),
+                        'departure': float('inf')
+                    }
+
                 drone_mission = next(d for d in self.drones if d.drone_id == d_id).missions[m_idx]
                 is_needed_now = (cid in drone_mission.packages) # Gói hàng này có trong chuyến resupply không ?
                 

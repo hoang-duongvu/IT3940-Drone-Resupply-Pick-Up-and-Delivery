@@ -49,7 +49,7 @@ def run_benchmark(data_dir: str, output_file: str):
             start_time = time.time()
             tabu = TabuSearch(problem, init_sol)
             # Use same settings as main.py
-            best_sol = tabu.solve(max_iterations=300, tabu_tenure=20)
+            best_sol = tabu.solve4bench(max_iterations=200, tabu_tenure=20)
             end_time = time.time()
             
             best_makespan = best_sol.calculate_makespan()
@@ -96,6 +96,6 @@ def run_benchmark(data_dir: str, output_file: str):
         print(f"\nResults saved to {output_file}")
 
 if __name__ == "__main__":
-    data_folder = "./data/0130/100_instances"
-    output_file = "./data/sample_output1/0130/benchmark_results_100.csv"
+    data_folder = "./data/0130/50_instances"
+    output_file = "./output/50I/benchmark_results_50.csv"
     run_benchmark(data_folder, output_file)

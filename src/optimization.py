@@ -467,7 +467,7 @@ class TabuSearch:
             # 1. Generate Neighborhood with Ratios
             # User request: 60% Relocate, 30% Swap, 5% Add Drone, 5% Remove Drone
             # Assumed batch size: 100 candidates per iteration
-            BATCH_SIZE = 100
+            BATCH_SIZE = 1000
             
             moves_relocate = self.neighborhood.get_relocate_moves(self.current_solution)
             moves_swap = self.neighborhood.get_swap_moves(self.current_solution)
@@ -482,17 +482,11 @@ class TabuSearch:
                     return random.sample(moves, count)
                 return moves
 
-            # candidates = []
-            # candidates.extend(sample_moves(moves_relocate, int(BATCH_SIZE * 0.60)))
-            # candidates.extend(sample_moves(moves_swap, int(BATCH_SIZE * 0.30)))
-            # candidates.extend(sample_moves(moves_add, int(BATCH_SIZE * 0.05)))
-            # candidates.extend(sample_moves(moves_remove, int(BATCH_SIZE * 0.05)))
-
             candidates = []
-            candidates.extend(moves_relocate)
-            candidates.extend(moves_swap)
-            candidates.extend(moves_add)
-            candidates.extend(moves_remove)
+            candidates.extend(sample_moves(moves_relocate, int(BATCH_SIZE * 0.60)))
+            candidates.extend(sample_moves(moves_swap, int(BATCH_SIZE * 0.30)))
+            candidates.extend(sample_moves(moves_add, int(BATCH_SIZE * 0.05)))
+            candidates.extend(sample_moves(moves_remove, int(BATCH_SIZE * 0.05)))
             
             # 2. Evaluate Candidates
             best_move = None
@@ -537,13 +531,8 @@ class TabuSearch:
                 if best_move_makespan < best_makespan:
                     self.best_solution = best_move_sol.copy()
                     best_makespan = best_move_makespan
-                
-                # Update Tabu List
-                # Add REVERSE move to tabu
-                # Simple implementation: Add applied move to tabu (to prevent immediate undo if we treated it as "current state is tabu")
-                # Better: Forbidden to return to previous state.
                 self.tabu_list[self.get_move_signature(best_move)] = iteration + tabu_tenure
             else:
                 break
-            
+                
         return self.best_solution

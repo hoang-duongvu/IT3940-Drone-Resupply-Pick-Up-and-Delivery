@@ -274,7 +274,115 @@ class Solution:
             problem=self.problem  # Problem không cần copy
         )
 
-    # ========== FEASIBILITY CHECK ==========
+    # ========== SERIALIZATION ==========
+    def save_to_file(self, filename: str):
+        """Lưu lời giải ra file text (Chỉ lưu các mission hợp lệ)"""
+        # Tính toán để lọc các mission lỗi
+        _, drone_map, _ = self.calculate_timestamps()
+        
+        with open(filename, 'w') as f:
+            f.write(f"Makespan: {self.calculate_makespan()}\n")
+            f.write("TRUCKS\n")
+            for truck in self.trucks:
+                # Gộp tất cả trips thành 1 list route cho dễ nhìn
+                routes_str = " | ".join(str(t.route) for t in truck.trips)
+                f.write(f"Truck {truck.truck_id}: {routes_str}\n")
+            
+            f.write("DRONES\n")
+            for drone in self.drones:
+                f.write(f"Drone {drone.drone_id}:\n")
+                saved_count = 0
+                for m_idx, mission in enumerate(drone.missions):
+                    # Filter: Chỉ lưu mission có thông tin chốt thời gian hợp lệ
+                    if (drone.drone_id, m_idx) not in drone_map:
+                        continue
+                        
+                    # Format: Mission <idx>: Meet=<id>, Truck=<id>, Pkgs=[...]
+                    # Lưu ý: idx ở đây là thứ tự trong file, nên dùng saved_count
+                    f.write(f"  Mission {saved_count}: Meet={mission.meet_point}, Truck={mission.truck_id}, Pkgs={mission.packages}\n")
+                    saved_count += 1
+
+    @staticmethod
+    def load_from_file(filename: str, problem: Problem) -> 'Solution':
+        """Đọc lời giải từ file text"""
+        trucks = []
+        drones = []
+        
+        # Init trucks (theo số lượng trong problem config hoặc tự detect)
+        # Giả sử file save đủ thông tin
+        
+        current_section = None
+        current_drone = None
+        
+        import ast # Để parse list string "[1, 2]" safely
+        
+        with open(filename, 'r') as f:
+            lines = f.readlines()
+            
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("Makespan"):
+                continue
+            
+            if line == "TRUCKS":
+                current_section = "TRUCKS"
+                continue
+            elif line == "DRONES":
+                current_section = "DRONES"
+                continue
+                
+            if current_section == "TRUCKS":
+                # Truck 0: [0, 1, 0] | [0, 2, 0]
+                if line.startswith("Truck"):
+                    parts = line.split(":", 1)
+                    t_id_str = parts[0].replace("Truck", "").strip()
+                    t_id = int(t_id_str)
+                    
+                    routes_part = parts[1].strip()
+                    trip_strs = routes_part.split("|")
+                    
+                    trips = []
+                    for t_str in trip_strs:
+                        route = ast.literal_eval(t_str.strip())
+                        trips.append(Trip(route=route))
+                    
+                    trucks.append(TruckRoute(truck_id=t_id, trips=trips))
+
+            elif current_section == "DRONES":
+                # Drone 0:
+                #   Mission 0: Meet=22, Truck=0, Pkgs=[22]
+                if line.startswith("Drone"):
+                    d_id = int(line.replace("Drone", "").replace(":", "").strip())
+                    current_drone = DroneRoute(drone_id=d_id, missions=[])
+                    drones.append(current_drone)
+                elif line.startswith("Mission"):
+                    # Parse mission
+                    # Mission 0: Meet=22, Truck=0, Pkgs=[22]
+                    parts = line.split(":", 1)[1].strip() # Meet=22, Truck=0, Pkgs=[22]
+                    
+                    # Tách các cặp key=value
+                    # Cẩn thận với Pkgs có dấu , bên trong list
+                    # Dùng regex hoặc split thông minh
+                    # Format của mình fix cứng: "Meet=..., Truck=..., Pkgs=..."
+                    
+                    # Split theo ", " nhưng Pkgs=[...] cũng có ,
+                    # Nên find index
+                    idx_meet = parts.find("Meet=")
+                    idx_truck = parts.find("Truck=")
+                    idx_pkgs = parts.find("Pkgs=")
+                    
+                    meet_str = parts[idx_meet:idx_truck].replace("Meet=", "").strip().strip(",")
+                    truck_str = parts[idx_truck:idx_pkgs].replace("Truck=", "").strip().strip(",")
+                    pkgs_str = parts[idx_pkgs:].replace("Pkgs=", "").strip()
+                    
+                    meet_point = int(meet_str)
+                    truck_id = int(truck_str)
+                    packages = ast.literal_eval(pkgs_str)
+                    
+                    mission = Mission(meet_point=meet_point, truck_id=truck_id, packages=packages)
+                    current_drone.missions.append(mission)
+
+        return Solution(trucks=trucks, drones=drones, problem=problem)
     def check_capacity_truck(self) -> Tuple[bool, List[str]]:
         """Kiểm tra ràng buộc capacity của truck"""
         violations = []

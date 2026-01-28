@@ -219,7 +219,7 @@ def main():
     # Đường dẫn file dữ liệ
     import argparse
     parser = argparse.ArgumentParser(description='Drone Resupply VRP')
-    parser.add_argument('--input', type=str, default="./data/0130/50_instances/U_50_0.5_Num_10_pd.txt", help='Path to input data file')
+    parser.add_argument('--input', type=str, default="./data/0130/20_instances/U_20_0.5_Num_1_pd.txt", help='Path to input data file')
     args = parser.parse_args()
     data_file = args.input
 

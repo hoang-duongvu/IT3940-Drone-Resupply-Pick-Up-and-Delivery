@@ -1,0 +1,10 @@
+Makespan: 216.79999999999998
+TRUCKS
+Truck 0: [0, 4, 3, 2, 6, 0]
+Truck 1: [0, 5, 1, 10, 9, 8, 7, 0]
+DRONES
+Drone 0:
+  Mission 0: Meet=4, Truck=0, Pkgs=[6]
+  Mission 1: Meet=9, Truck=1, Pkgs=[9]
+Drone 1:
+  Mission 0: Meet=2, Truck=0, Pkgs=[2]

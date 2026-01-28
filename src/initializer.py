@@ -361,23 +361,32 @@ class SolutionInitializer:
                 key = (truck.truck_id, trip_idx)
                 if not grouped_packages[key]:
                     # Tìm max ready time package trong trip (chỉ C1)
-                    best_pkg = None
-                    max_rt = -1
+                    # Sửa đổi: Chọn ngẫu nhiên 1-3 package có ready time lớn nhất
+                    c1_candidates = []
                     
                     for c_id in trip.customers():
                          c = self.problem.get_customer(c_id)
                          if c.ctype == CustomerType.D and c.ready_time > 0:
-                             if c.ready_time > max_rt:
-                                 max_rt = c.ready_time
-                                 best_pkg = c
+                             c1_candidates.append(c)
                     
-                    if best_pkg:
-                        grouped_packages[key].append({
-                            'package_id': best_pkg.id,
-                            'ready_time': best_pkg.ready_time,
-                            'meet_point': best_pkg.id,
-                            'weight': best_pkg.weight
-                        })
+                    # Sort descending by ready_time
+                    c1_candidates.sort(key=lambda x: x.ready_time, reverse=True)
+                    
+                    if c1_candidates:
+                        import random
+                        # Chọn ngẫu nhiên k từ 1 đến 3
+                        max_pick = min(len(c1_candidates), 3)
+                        k = random.randint(1, max_pick)
+                        
+                        picked_candidates = c1_candidates[:k]
+                        
+                        for best_pkg in picked_candidates:
+                            grouped_packages[key].append({
+                                'package_id': best_pkg.id,
+                                'ready_time': best_pkg.ready_time,
+                                'meet_point': best_pkg.id,
+                                'weight': best_pkg.weight
+                            })
 
         # Tạo missions từ các nhóm packages
         all_missions = []

@@ -36,9 +36,9 @@ class NeighborhoodGenerator:
         # Thử di chuyển mỗi khách hàng đến một vị trí mới
         # Giới hạn số lượng move check mỗi vòng để đảm bảo hiệu năng
         selected_positions = customer_positions
-        if len(customer_positions) > 50:
+        if len(customer_positions) > 100:
              import random
-             selected_positions = random.sample(customer_positions, 20)
+             selected_positions = random.sample(customer_positions, 100)
         
         for (t1_idx, tr1_idx, pos1) in selected_positions:
             cid = trucks[t1_idx].trips[tr1_idx].route[pos1]
@@ -86,7 +86,7 @@ class NeighborhoodGenerator:
             return []
             
         # Sample random pairs
-        num_swaps = 50
+        num_swaps = 100
         for _ in range(num_swaps):
             import random
             pos_a, pos_b = random.sample(customer_positions, 2)
@@ -374,7 +374,7 @@ class TabuSearch:
             # 1. Generate Neighborhood with Ratios
             # User request: 60% Relocate, 30% Swap, 5% Add Drone, 5% Remove Drone
             # Assumed batch size: 100 candidates per iteration
-            BATCH_SIZE = 100
+            BATCH_SIZE = 1000
             
             moves_relocate = self.neighborhood.get_relocate_moves(self.current_solution)
             moves_swap = self.neighborhood.get_swap_moves(self.current_solution)
@@ -482,11 +482,17 @@ class TabuSearch:
                     return random.sample(moves, count)
                 return moves
 
+            # candidates = []
+            # candidates.extend(sample_moves(moves_relocate, int(BATCH_SIZE * 0.60)))
+            # candidates.extend(sample_moves(moves_swap, int(BATCH_SIZE * 0.30)))
+            # candidates.extend(sample_moves(moves_add, int(BATCH_SIZE * 0.05)))
+            # candidates.extend(sample_moves(moves_remove, int(BATCH_SIZE * 0.05)))
+
             candidates = []
-            candidates.extend(sample_moves(moves_relocate, int(BATCH_SIZE * 0.60)))
-            candidates.extend(sample_moves(moves_swap, int(BATCH_SIZE * 0.30)))
-            candidates.extend(sample_moves(moves_add, int(BATCH_SIZE * 0.05)))
-            candidates.extend(sample_moves(moves_remove, int(BATCH_SIZE * 0.05)))
+            candidates.extend(moves_relocate)
+            candidates.extend(moves_swap)
+            candidates.extend(moves_add)
+            candidates.extend(moves_remove)
             
             # 2. Evaluate Candidates
             best_move = None

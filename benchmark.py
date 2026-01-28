@@ -8,7 +8,7 @@ from typing import List
 # Setup path to import from src
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-from models import load_problem_no_C2
+from models import load_problem
 from initializer import SolutionInitializer
 from optimization import TabuSearch
 from config import print_config
@@ -38,7 +38,7 @@ def run_benchmark(data_dir: str, output_file: str):
         
         try:
             # 1. Load Problem
-            problem = load_problem_no_C2(filepath)
+            problem = load_problem(filepath)
             
             # 2. Initialize
             initializer = SolutionInitializer(problem)
@@ -49,7 +49,7 @@ def run_benchmark(data_dir: str, output_file: str):
             start_time = time.time()
             tabu = TabuSearch(problem, init_sol)
             # Use same settings as main.py
-            best_sol = tabu.solve4bench(max_iterations=300, tabu_tenure=20)
+            best_sol = tabu.solve(max_iterations=300, tabu_tenure=20)
             end_time = time.time()
             
             best_makespan = best_sol.calculate_makespan()
@@ -96,6 +96,6 @@ def run_benchmark(data_dir: str, output_file: str):
         print(f"\nResults saved to {output_file}")
 
 if __name__ == "__main__":
-    data_folder = "./data/15_20_instances"
-    output_file = "./data/sample_output/benchmark_results_15_20.csv"
+    data_folder = "./data/0130/100_instances"
+    output_file = "./data/sample_output1/0130/benchmark_results_100.csv"
     run_benchmark(data_folder, output_file)

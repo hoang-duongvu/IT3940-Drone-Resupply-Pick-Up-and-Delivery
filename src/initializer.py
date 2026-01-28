@@ -321,22 +321,46 @@ class SolutionInitializer:
         grouped_packages = defaultdict(list)  # (truck_id, trip_idx) → list of packages
 
         for truck in trucks:
-            current_time = 0
+            current_time = 0.0 # Arrival at depot for current trip
             for trip_idx, trip in enumerate(truck.trips):
-                current_time += TRUCK_RECEIVE_TIME
+                # Calculate start time for this trip (loading at depot)
+                current_trip_arrival = current_time
+                
+                # Find max ready time packages in this trip that are NOT potentially drone packages?
+                # For now, simplistic approach: assuming truck waits for ALL C1 packages in trip.
+                # Even if later some become drone missions, the truck schedule being "later" is safer for feasibility.
+                
+                # Simulate running through the trip to check for C1 packages ready time violation
+                # But here we are IDENTIFYING cutsomers to BECOME drone packages.
+                
+                # We need to simulate the truck movement to compare with ready_time.
+                # Logic: Truck waits at depot until max(arrival, max_ready_of_onboard_packages).
+                # But we don't know which are onboard yet (D) vs Drone.
+                # Assume all D are onboard initially.
+                
+                trip_max_ready = 0
+                for cid in trip.customers():
+                    c = self.problem.get_customer(cid)
+                    if c.ctype == CustomerType.D:
+                        if c.ready_time > trip_max_ready:
+                            trip_max_ready = c.ready_time
+                
+                trip_start_service = max(current_trip_arrival, trip_max_ready)
+                trip_depart_depot = trip_start_service + TRUCK_RECEIVE_TIME
+                
+                sim_time = trip_depart_depot
                 prev = 0
 
                 for cid in trip.route[1:]:  # Bỏ depot đầu
-                    current_time += self.problem.truck_travel_time(prev, cid)
+                    sim_time += self.problem.truck_travel_time(prev, cid)
 
                     if cid == 0:
                         continue
                            
                     customer = self.problem.get_customer(cid)
 
-                    # Nếu là C1 và truck đến TRƯỚC khi package ready
                     if customer.ctype == CustomerType.D and customer.ready_time > 0:
-                        if current_time < customer.ready_time:
+                        if sim_time < customer.ready_time:
                             # Thêm vào nhóm theo (truck_id, trip_idx)
                             key = (truck.truck_id, trip_idx)
                             grouped_packages[key].append({
@@ -346,7 +370,7 @@ class SolutionInitializer:
                                 'weight': customer.weight
                             })
 
-                    current_time += TRUCK_SERVICE_TIME
+                    sim_time += TRUCK_SERVICE_TIME
                     prev = cid
 
                 # Nếu không có package nào được chọn -> Chọn package có ready time lớn nhất
@@ -370,6 +394,29 @@ class SolutionInitializer:
                             'meet_point': best_pkg.id,
                             'weight': best_pkg.weight
                         })
+
+                # update start time for next trip
+                # Find max ready time in this trip (to calculate departure)
+                max_ready_in_trip = 0
+                for c_id in trip.customers():
+                    c_obj = self.problem.get_customer(c_id)
+                    if c_obj.ctype == CustomerType.D:
+                        if c_obj.ready_time > max_ready_in_trip:
+                            max_ready_in_trip = c_obj.ready_time
+                            
+                depart_time_trip = max(current_trip_arrival, max_ready_in_trip) + TRUCK_RECEIVE_TIME
+                
+                # Calculate trip travel time
+                trip_travel = 0
+                t_prev = 0
+                for c_id in trip.route[1:]:
+                    trip_travel += self.problem.truck_travel_time(t_prev, c_id)
+                    if c_id != 0:
+                        trip_travel += TRUCK_SERVICE_TIME
+                    t_prev = c_id
+                
+                # Update current_time for next trip (Arrival at depot)
+                current_time = depart_time_trip + trip_travel
 
         # Tạo missions từ các nhóm packages
         all_missions = []
@@ -412,9 +459,38 @@ class SolutionInitializer:
                     truck = next(t for t in trucks if t.truck_id == truck_id)
                     trip = truck.trips[trip_idx]
                     
+                    # Calculate arrival_at_depot for this trip
+                    # Need to recalculate or get from previous loop?
+                    # The grouped_packages iteration is separated from the truck simulation loop.
+                    # We need the `current_trip_arrival` calculated above.
+                    # Re-calculating it is cleaner than storing it.
+                    
+                    trip_arrival_at_depot = 0.0
+                    for t_idx, t in enumerate(truck.trips):
+                        if t_idx == trip_idx:
+                            break
+                        
+                        # Calculate duration of previous trip t
+                        t_max_ready = 0
+                        for c in t.customers():
+                             cust = self.problem.get_customer(c)
+                             if cust.ctype == CustomerType.D:
+                                 t_max_ready = max(t_max_ready, cust.ready_time)
+                        
+                        t_start = max(trip_arrival_at_depot, t_max_ready) + TRUCK_RECEIVE_TIME
+                        t_travel = 0
+                        t_prev = 0
+                        for c in t.route[1:]:
+                            t_travel += self.problem.truck_travel_time(t_prev, c)
+                            if c != 0: t_travel += TRUCK_SERVICE_TIME
+                            t_prev = c
+                        
+                        trip_arrival_at_depot = t_start + t_travel
+                    
+                    
                     # Tìm meet point hợp lệ (backtrack từ vị trí package về đầu trip)
                     valid_meet_point = self._find_valid_meet_point(
-                        trip, pkg_id, pkg_info['ready_time']
+                        trip, pkg_id, pkg_info['ready_time'], arrival_at_depot=trip_arrival_at_depot
                     )
                     
                     if valid_meet_point is None:
@@ -447,9 +523,18 @@ class SolutionInitializer:
 
         return drones
 
-    def _estimate_arrival_time(self, truck: TruckRoute, trip: Trip, target_cid: int) -> float:
+    def _estimate_arrival_time(self, truck: TruckRoute, trip: Trip, target_cid: int, arrival_at_depot: float) -> float:
         """Ước tính thời gian truck đến target_cid"""
-        time = TRUCK_RECEIVE_TIME  # Nhận hàng ở depot
+        # Find max ready in trip
+        max_ready = 0
+        for cid in trip.customers():
+            c = self.problem.get_customer(cid)
+            if c.ctype == CustomerType.D:
+                if c.ready_time > max_ready:
+                    max_ready = c.ready_time
+        
+        start_time = max(arrival_at_depot, max_ready)
+        time = start_time + TRUCK_RECEIVE_TIME
 
         prev = 0
         for cid in trip.route[1:]:
@@ -462,7 +547,7 @@ class SolutionInitializer:
 
         return time
 
-    def _find_valid_meet_point(self, trip: Trip, pkg_id: int, pkg_ready_time: float) -> int:
+    def _find_valid_meet_point(self, trip: Trip, pkg_id: int, pkg_ready_time: float, arrival_at_depot: float) -> int:
         """
         Tìm meet point hợp lệ cho gói hàng bằng cách backtrack từ vị trí package về đầu trip.
         Meet point hợp lệ phải thỏa mãn: tổng flight time (bao gồm wait time) < DRONE_FLIGHT_TIME
@@ -471,6 +556,7 @@ class SolutionInitializer:
             trip: Trip của truck
             pkg_id: ID của package cần tìm meet point
             pkg_ready_time: Thời gian package sẵn sàng tại depot
+            arrival_at_depot: Thời gian truck đến depot để bắt đầu trip
             
         Returns:
             meet_point ID nếu tìm được, None nếu không tìm được
@@ -494,10 +580,14 @@ class SolutionInitializer:
             fly_in = self.problem.drone_travel_time(meet_point, 0)
             
             # 2. Ước tính thời gian truck đến meet point
-            truck_arrival = self._estimate_arrival_time(None, trip, meet_point)
+            truck_arrival = self._estimate_arrival_time(None, trip, meet_point, arrival_at_depot)
             
             # 3. Ước tính thời gian drone đến meet point
             # Drone xuất phát khi package ready + handling time + fly time
+            # Note: Drone sẵn sàng tại depot có thể bị delay bởi mission trước đó.
+            # Ở giai đoạn initialize, ta chưa biết mission trước đó.
+            # Ta giả định drone free or ready_time dominates.
+            # Safety buffer 10% sẽ lo phần nào.
             drone_arrival = pkg_ready_time + DRONE_HANDLING_TIME + fly_out
             
             # 4. Ước tính wait time (drone chờ truck)
@@ -603,8 +693,27 @@ class SolutionInitializer:
                     repaired_any = True
                     break
                 
+                # Get accurate arrival_at_depot from solution timestamps
+                # We need truck_id and trip_idx
+                # trip object "trip" is found above.
+                # We need its index in truck.trips
+                trip_idx = truck.trips.index(trip)
+                
+                # Use current solution timestamps
+                _, truck_map, _ = solution.calculate_timestamps()
+                
+                # Get arrival of this trip at depot (pos 0)
+                # Key: (truck_id, trip_idx, 0)
+                node_info = truck_map.get((truck.truck_id, trip_idx, 0))
+                
+                if node_info:
+                    arrival_at_depot = node_info['arrival']
+                else:
+                    # Fallback if map missing (should not happen)
+                    arrival_at_depot = 0.0
+
                 # Tìm meet point mới hợp lệ
-                new_meet_point = self._find_valid_meet_point(trip, first_pkg, max_ready)
+                new_meet_point = self._find_valid_meet_point(trip, first_pkg, max_ready, arrival_at_depot)
                 
                 if new_meet_point is not None and new_meet_point != mission.meet_point:
                     # Cập nhật meet point mới (khác với meet point cũ)

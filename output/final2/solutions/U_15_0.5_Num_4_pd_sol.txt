@@ -1,0 +1,7 @@
+Makespan: 216.39999999999998
+TRUCKS
+Truck 0: [0, 2, 9, 7, 6, 13, 4, 3, 0]
+Truck 1: [0, 11, 1, 10, 12, 14, 5, 8, 15, 0]
+DRONES
+Drone 0:
+Drone 1:

@@ -465,7 +465,9 @@ class Solution:
             for m_idx, mission in enumerate(drone.missions):
                 info = drone_map.get((drone.drone_id, m_idx))
                 if not info:
-                    continue # Should be caught in calc_violations
+                    # Nếu không tính được thời gian (do cycle, orphan...), coi là vi phạm để repair logic xử lý (xóa mission)
+                    violations.append(f"Drone {drone.drone_id}, Mission {m_idx}: Timeline calculation failed (Cycle or Orphan)")
+                    continue
                     
                 total_time = info['flight_time']
 

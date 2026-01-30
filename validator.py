@@ -49,6 +49,7 @@ def validate_solution(instance_file: str, solution_file: str):
             for v in violations:
                 print(f"  - {v}")
         print("-" * 60)
+        solution.print_solution()
 
     except Exception as e:
         print(f"ERROR during validation: {e}")

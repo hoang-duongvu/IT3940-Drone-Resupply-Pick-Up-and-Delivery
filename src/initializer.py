@@ -195,11 +195,16 @@ class SolutionInitializer:
             # Tính current_load tại điểm cuối route
             current_load = self._calculate_load_at_end(trip, d_load)
 
-            # 1. Tìm D (C1) gần nhất (kiểm tra capacity tại depot)
+            # 1. Tìm D (C1) gần nhất (kiểm tra capacity tại depot VÀ current load)
             for cid in unvisited_c1:
                 customer = self.problem.get_customer(cid)
-                # Với D: package load từ depot → kiểm tra d_load + weight
+                # Với D: package load từ depot → kiểm tra d_load + weight (depot constraint)
+                # VÀ kiểm tra current_load + weight (max load trong route khi có pending pickups)
+                # Vì D package ở trên xe từ depot cho đến khi được giao,
+                # nếu có pickup xảy ra trước khi D được giao, load tại pickup = D weight + pickup weight
                 if d_load + customer.weight > TRUCK_CAPACITY:
+                    continue
+                if current_load + customer.weight > TRUCK_CAPACITY:
                     continue
 
                 dist = self.problem.manhattan_distance(current, cid)
@@ -534,7 +539,7 @@ class SolutionInitializer:
         Kiểm tra và sửa chữa các drone mission vi phạm flight time constraint.
         
         Chiến lược sửa chữa:
-        1. Kiểm tra feasibility của solution
+        1. Kiểm tra feasibility của solution (chỉ tập trung flight time để tối ưu)
         2. Nếu có mission vi phạm flight time:
            - Thử tìm meet point mới (gần hơn) cho mission đó
            - Nếu không tìm được -> loại bỏ mission (package sẽ load từ depot)
@@ -542,25 +547,24 @@ class SolutionInitializer:
         """
         import re
         
-        max_repair_iterations = 10
+        # Tăng giới hạn loop vì với instance lớn (50-100 customers), số lượng vi phạm ban đầu có thể lớn
+        # Cần iterate đủ số lần để clear hết các vi phạm
+        max_repair_iterations = 500
         
         for iteration in range(max_repair_iterations):
-            # Kiểm tra feasibility
-            is_feasible, violations = solution.is_feasible()
+            # Chỉ kiểm tra violatins về flight time để tối ưu tốc độ
+            # (Thay vì chạy full is_feasible check cả truck capacity, v.v)
+            is_valid, flight_violations = solution.check_drone_flight_time()
             
-            if is_feasible:
-                return solution  # Đã hợp lệ
-            
-            # Lọc các vi phạm flight time
-            flight_violations = [v for v in violations if 'flight_time' in v.lower()]
-            
-            if not flight_violations:
-                # Không còn vi phạm flight time (có thể còn vi phạm khác)
+            if is_valid:
+                # Nếu flight time ok, có thể return solution
+                print("Init sol OK!")
                 return solution
             
             # Parse violations để tìm drone_id và mission_idx vi phạm
             repaired_any = False
             
+            # Chỉ sửa 1 violation mỗi vòng lặp để đảm bảo tính nhất quán (vì thay đổi 1 mission có thể ảnh hưởng wait time của mission khác)
             for violation in flight_violations:
                 # Format: "Drone X, Mission Y: flight_time=Z > W"
                 match = re.search(r'Drone (\d+), Mission (\d+)', violation)
@@ -600,9 +604,12 @@ class SolutionInitializer:
                 
                 # Thử tìm meet point mới cho từng package trong mission
                 # Lấy max ready_time của các packages
-                max_ready = max(self.problem.get_customer(p).ready_time for p in mission.packages)
-                
-                # Tìm package đầu tiên trong route (để tìm meet point)
+                max_ready = 0
+                for p in mission.packages:
+                     c = self.problem.get_customer(p)
+                     max_ready = max(max_ready, c.ready_time)
+
+                # Tìm package đầu tiên trong route (để giới hạn range tìm meet point)
                 first_pkg = None
                 first_pos = float('inf')
                 for pkg_id in mission.packages:
@@ -628,17 +635,18 @@ class SolutionInitializer:
                     mission.meet_point = new_meet_point
                     repaired_any = True
                 else:
-                    # Không tìm được meet point hợp lệ hoặc meet point không thay đổi
+                    # Không tìm được meet point hợp lệ HOẶC meet point 'hợp lệ' tìm được lại chính là điểm cũ (vẫn gây lỗi)
                     # -> Loại bỏ mission (package sẽ load từ depot)
                     drone.missions.pop(mission_idx)
                     repaired_any = True
                 
-                # Invalidate cache và break để kiểm tra lại
+                # Invalidate cache và break để kiểm tra lại từ đầu
                 solution.invalidate_cache()
                 break
             
             if not repaired_any:
-                # Không sửa được gì thêm
+                # Không sửa được gì thêm (có thể do lỗi parse hoặc deadlock), break để tránh lặp vô hạn
                 break
         
+        print(f"[Initializer] Repair finished after {iteration + 1} iterations")
         return solution

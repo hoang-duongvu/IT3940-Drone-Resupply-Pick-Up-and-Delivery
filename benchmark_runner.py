@@ -115,9 +115,9 @@ def run_benchmark(data_folder: str, output_csv: str, solution_output_dir: str, n
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description='Benchmark Runner 10 Runs')
-    parser.add_argument('--data', type=str, default='./data/0130/50_instances', help='Data directory containing instances')
-    parser.add_argument('--output', type=str, default='./output/50I/results.csv', help='Output CSV file path')
-    parser.add_argument('--sol-dir', type=str, default='./output/50I/solutions', help='Directory to save best solutions')
+    parser.add_argument('--data', type=str, default='./data', help='Data directory containing instances')
+    parser.add_argument('--output', type=str, default='./output/final2/results.csv', help='Output CSV file path')
+    parser.add_argument('--sol-dir', type=str, default='./output/final2/solutions', help='Directory to save best solutions')
     parser.add_argument('--rounds', type=int, default=1, help='Number of runs per instance')
     parser.add_argument('--iters', type=int, default=100, help='Number of Tabu Search iterations')
     

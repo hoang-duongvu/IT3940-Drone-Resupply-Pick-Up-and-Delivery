@@ -274,7 +274,115 @@ class Solution:
             problem=self.problem  # Problem không cần copy
         )
 
-    # ========== FEASIBILITY CHECK ==========
+    # ========== SERIALIZATION ==========
+    def save_to_file(self, filename: str):
+        """Lưu lời giải ra file text (Chỉ lưu các mission hợp lệ)"""
+        # Tính toán để lọc các mission lỗi
+        _, drone_map, _ = self.calculate_timestamps()
+        
+        with open(filename, 'w') as f:
+            f.write(f"Makespan: {self.calculate_makespan()}\n")
+            f.write("TRUCKS\n")
+            for truck in self.trucks:
+                # Gộp tất cả trips thành 1 list route cho dễ nhìn
+                routes_str = " | ".join(str(t.route) for t in truck.trips)
+                f.write(f"Truck {truck.truck_id}: {routes_str}\n")
+            
+            f.write("DRONES\n")
+            for drone in self.drones:
+                f.write(f"Drone {drone.drone_id}:\n")
+                saved_count = 0
+                for m_idx, mission in enumerate(drone.missions):
+                    # Filter: Chỉ lưu mission có thông tin chốt thời gian hợp lệ
+                    if (drone.drone_id, m_idx) not in drone_map:
+                        continue
+                        
+                    # Format: Mission <idx>: Meet=<id>, Truck=<id>, Pkgs=[...]
+                    # Lưu ý: idx ở đây là thứ tự trong file, nên dùng saved_count
+                    f.write(f"  Mission {saved_count}: Meet={mission.meet_point}, Truck={mission.truck_id}, Pkgs={mission.packages}\n")
+                    saved_count += 1
+
+    @staticmethod
+    def load_from_file(filename: str, problem: Problem) -> 'Solution':
+        """Đọc lời giải từ file text"""
+        trucks = []
+        drones = []
+        
+        # Init trucks (theo số lượng trong problem config hoặc tự detect)
+        # Giả sử file save đủ thông tin
+        
+        current_section = None
+        current_drone = None
+        
+        import ast # Để parse list string "[1, 2]" safely
+        
+        with open(filename, 'r') as f:
+            lines = f.readlines()
+            
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("Makespan"):
+                continue
+            
+            if line == "TRUCKS":
+                current_section = "TRUCKS"
+                continue
+            elif line == "DRONES":
+                current_section = "DRONES"
+                continue
+                
+            if current_section == "TRUCKS":
+                # Truck 0: [0, 1, 0] | [0, 2, 0]
+                if line.startswith("Truck"):
+                    parts = line.split(":", 1)
+                    t_id_str = parts[0].replace("Truck", "").strip()
+                    t_id = int(t_id_str)
+                    
+                    routes_part = parts[1].strip()
+                    trip_strs = routes_part.split("|")
+                    
+                    trips = []
+                    for t_str in trip_strs:
+                        route = ast.literal_eval(t_str.strip())
+                        trips.append(Trip(route=route))
+                    
+                    trucks.append(TruckRoute(truck_id=t_id, trips=trips))
+
+            elif current_section == "DRONES":
+                # Drone 0:
+                #   Mission 0: Meet=22, Truck=0, Pkgs=[22]
+                if line.startswith("Drone"):
+                    d_id = int(line.replace("Drone", "").replace(":", "").strip())
+                    current_drone = DroneRoute(drone_id=d_id, missions=[])
+                    drones.append(current_drone)
+                elif line.startswith("Mission"):
+                    # Parse mission
+                    # Mission 0: Meet=22, Truck=0, Pkgs=[22]
+                    parts = line.split(":", 1)[1].strip() # Meet=22, Truck=0, Pkgs=[22]
+                    
+                    # Tách các cặp key=value
+                    # Cẩn thận với Pkgs có dấu , bên trong list
+                    # Dùng regex hoặc split thông minh
+                    # Format của mình fix cứng: "Meet=..., Truck=..., Pkgs=..."
+                    
+                    # Split theo ", " nhưng Pkgs=[...] cũng có ,
+                    # Nên find index
+                    idx_meet = parts.find("Meet=")
+                    idx_truck = parts.find("Truck=")
+                    idx_pkgs = parts.find("Pkgs=")
+                    
+                    meet_str = parts[idx_meet:idx_truck].replace("Meet=", "").strip().strip(",")
+                    truck_str = parts[idx_truck:idx_pkgs].replace("Truck=", "").strip().strip(",")
+                    pkgs_str = parts[idx_pkgs:].replace("Pkgs=", "").strip()
+                    
+                    meet_point = int(meet_str)
+                    truck_id = int(truck_str)
+                    packages = ast.literal_eval(pkgs_str)
+                    
+                    mission = Mission(meet_point=meet_point, truck_id=truck_id, packages=packages)
+                    current_drone.missions.append(mission)
+
+        return Solution(trucks=trucks, drones=drones, problem=problem)
     def check_capacity_truck(self) -> Tuple[bool, List[str]]:
         """Kiểm tra ràng buộc capacity của truck"""
         violations = []
@@ -357,7 +465,9 @@ class Solution:
             for m_idx, mission in enumerate(drone.missions):
                 info = drone_map.get((drone.drone_id, m_idx))
                 if not info:
-                    continue # Should be caught in calc_violations
+                    # Nếu không tính được thời gian (do cycle, orphan...), coi là vi phạm để repair logic xử lý (xóa mission)
+                    violations.append(f"Drone {drone.drone_id}, Mission {m_idx}: Timeline calculation failed (Cycle or Orphan)")
+                    continue
                     
                 total_time = info['flight_time']
 
@@ -446,7 +556,7 @@ class Solution:
         self._is_feasible = feasible
         return feasible, all_violations
 
-    # ========== MAKESPAN CALCULATION (GRAPH BASED) ==========
+    #========== MAKESPAN CALCULATION ==========
     def calculate_timestamps(self) -> Tuple[Dict, Dict, List[str]]:
         """
         Tính toán mốc thời gian chi tiết cho toàn bộ hệ thống (Truck & Drone).
@@ -505,6 +615,7 @@ class Solution:
                 ready_at_depot = 0.0
             else:
                 prev_mission = get_drone_times(d_id, m_idx - 1)
+                if prev_mission is None: return None
                 ready_at_depot = prev_mission['return_depot']
 
             # Ràng buộc: ready_time của packages - OK
@@ -532,7 +643,15 @@ class Solution:
             
             if not truck_resinfo:
                  visiting.remove(state_key)
-                 return {} 
+                 # Mission orphaned (cannot find meet point on truck)
+                 # Return heavy penalty to avoid this state
+                 return {
+                     'ready_at_depot': float('inf'),
+                     'return_depot': float('inf'),
+                     'start_transfer': float('inf'),
+                     'finish_transfer': float('inf'),
+                     'flight_time': float('inf')
+                 } 
             
             tr_id, tr_idx, tr_pos = truck_resinfo
             
@@ -681,6 +800,16 @@ class Solution:
                 d_id, m_idx = resupply_mission_key
                 drone_times = get_drone_times(d_id, m_idx) # Trigger wait for drone
                 
+                if drone_times is None:
+                    return {
+                        'arrival': arrival,
+                        'service_start': float('inf'),
+                        'service_end': float('inf'),
+                        'resupply_start': float('inf'),
+                        'resupply_end': float('inf'),
+                        'departure': float('inf')
+                    }
+
                 drone_mission = next(d for d in self.drones if d.drone_id == d_id).missions[m_idx]
                 is_needed_now = (cid in drone_mission.packages) # Gói hàng này có trong chuyến resupply không ?
                 
@@ -759,6 +888,7 @@ class Solution:
         return max_time
 
         # ========== DISPLAY ==========
+  
     def print_solution(self):
         """In lời giải chi tiết"""
         truck_map, drone_map, violations = self.calculate_timestamps()
@@ -878,6 +1008,64 @@ def load_problem(filepath: str) -> Problem:
     for pair_id, pair_data in c2_pairs_dict.items():
         if 'P' in pair_data and 'DL' in pair_data:
             c2_pairs.append((pair_data['P'], pair_data['DL']))
+
+    return Problem(
+        customers=customers,
+        c1_customers=c1_customers,
+        c2_pairs=c2_pairs
+    )
+
+def load_problem_no_C2(filepath: str) -> Problem:
+    """
+    Đọc dữ liệu từ file không có C2
+    Format: ri    X    Y
+    Mỗi dòng là một khách hàng C1 (D)
+    """
+    customers = {}
+    c1_customers = []
+    c2_pairs = []
+
+    with open(filepath, 'r') as f:
+        lines = f.readlines()
+        
+    start_idx = 0
+    # Check header
+    if lines and 'ri' in lines[0] and 'X' in lines[0]:
+        start_idx = 1
+        
+    cid_counter = 1
+    
+    for line in lines[start_idx:]:
+        line = line.strip()
+        if not line:
+            continue
+            
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+            
+        # Format: ri  X  Y
+        try:
+            ready_time = float(parts[0])
+            x = float(parts[1])
+            y = float(parts[2])
+            
+            customer = Customer(
+                id=cid_counter,
+                x=x,
+                y=y,
+                ctype=CustomerType.D,
+                ready_time=ready_time,
+                pair_id=0,
+                weight=1
+            )
+            
+            customers[cid_counter] = customer
+            c1_customers.append(cid_counter)
+            cid_counter += 1
+            
+        except ValueError:
+            continue
 
     return Problem(
         customers=customers,

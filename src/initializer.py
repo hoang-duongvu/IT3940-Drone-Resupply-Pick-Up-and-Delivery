@@ -62,9 +62,38 @@ class SolutionInitializer:
         for drone in drones:
             print(f"  Drone {drone.drone_id}: {len(drone.missions)} missions")
 
-        return Solution(trucks=trucks, drones=drones, problem=self.problem)
+        # Bước 5: Tạo solution và repair nếu có vi phạm
+        solution = Solution(trucks=trucks, drones=drones, problem=self.problem)
+        solution = self._repair_drone_missions(solution)
+        return solution
 
-    # OK
+    def initialize4bench(self) -> Solution:
+        """
+        Chiến lược: Nearest Neighbor + Cluster
+        1. Cluster khách hàng theo vị trí
+        2. Gán mỗi cluster cho 1 truck
+        3. Với mỗi cluster, dùng nearest neighbor để sắp xếp
+        4. Xác định drone resupply cho packages có ready_time cao
+        """
+
+        # Bước 1: Cluster khách hàng
+        clusters = self._cluster_customers()
+
+        # Bước 2 & 3: Tạo route cho mỗi truck
+        trucks = []
+        for truck_id in range(NUM_TRUCKS):
+            customer_ids = clusters.get(truck_id, [])
+            truck_route = self._build_truck_route(truck_id, customer_ids)
+            trucks.append(truck_route)
+
+        # Bước 4: Xác định drone resupply
+        drones = self._assign_drone_resupply(trucks)
+
+        # Bước 5: Tạo solution và repair nếu có vi phạm
+        solution = Solution(trucks=trucks, drones=drones, problem=self.problem)
+        solution = self._repair_drone_missions(solution)
+        return solution
+
     def _cluster_customers(self) -> Dict[int, List[int]]:
         """
         Cluster khách hàng theo vị trí địa lý
@@ -98,7 +127,6 @@ class SolutionInitializer:
 
         return clusters
 
-    # OK
     def _fix_c2_pairs_cluster(self, clusters: Dict[int, List[int]]) -> Dict[int, List[int]]:
         """Đảm bảo pickup và delivery của cặp C2 cùng cluster"""
         for pickup_id, delivery_id in self.problem.c2_pairs:
@@ -120,7 +148,6 @@ class SolutionInitializer:
 
         return clusters
 
-    # OK
     def _build_truck_route(self, truck_id: int, customer_ids: List[int]) -> TruckRoute:
         """
         Xây dựng route cho truck bằng nearest neighbor
@@ -168,11 +195,16 @@ class SolutionInitializer:
             # Tính current_load tại điểm cuối route
             current_load = self._calculate_load_at_end(trip, d_load)
 
-            # 1. Tìm D (C1) gần nhất (kiểm tra capacity tại depot)
+            # 1. Tìm D (C1) gần nhất (kiểm tra capacity tại depot VÀ current load)
             for cid in unvisited_c1:
                 customer = self.problem.get_customer(cid)
-                # Với D: package load từ depot → kiểm tra d_load + weight
+                # Với D: package load từ depot → kiểm tra d_load + weight (depot constraint)
+                # VÀ kiểm tra current_load + weight (max load trong route khi có pending pickups)
+                # Vì D package ở trên xe từ depot cho đến khi được giao,
+                # nếu có pickup xảy ra trước khi D được giao, load tại pickup = D weight + pickup weight
                 if d_load + customer.weight > TRUCK_CAPACITY:
+                    continue
+                if current_load + customer.weight > TRUCK_CAPACITY:
                     continue
 
                 dist = self.problem.manhattan_distance(current, cid)
@@ -267,7 +299,6 @@ class SolutionInitializer:
 
         return truck
 
-    # OK
     def _calculate_load_at_end(self, trip: Trip, d_load: int) -> int:
         """
         Tính load tại cuối route hiện tại
@@ -290,7 +321,6 @@ class SolutionInitializer:
 
         return current_load
 
-    # OK
     def _assign_drone_resupply(self, trucks: List[TruckRoute]) -> List[DroneRoute]:
         """
         Xác định packages cần drone resupply
@@ -336,20 +366,26 @@ class SolutionInitializer:
                 key = (truck.truck_id, trip_idx)
                 if not grouped_packages[key]:
                     # Tìm max ready time package trong trip (chỉ C1)
-                    best_pkg = None
-                    max_rt = -1
+                    # Sửa đổi: Chọn ngẫu nhiên 1-3 package có ready time lớn nhất
+                    c1_candidates = []
                     
                     for c_id in trip.customers():
                          c = self.problem.get_customer(c_id)
                          if c.ctype == CustomerType.D and c.ready_time > 0:
-                             if c.ready_time > max_rt:
-                                 max_rt = c.ready_time
-                                 best_pkg = c
+                             c1_candidates.append(c)
                     
-                    if best_pkg:
-                        # Thử assign
-                        best_meet = self._find_best_meet_point(trip, best_pkg.id, best_pkg.weight)
-                        if best_meet:
+                    # Sort descending by ready_time
+                    c1_candidates.sort(key=lambda x: x.ready_time, reverse=True)
+                    
+                    if c1_candidates:
+                        import random
+                        # Chọn ngẫu nhiên k từ 1 đến 3
+                        max_pick = min(len(c1_candidates), 3)
+                        k = random.randint(1, max_pick)
+                        
+                        picked_candidates = c1_candidates[:k]
+                        
+                        for best_pkg in picked_candidates:
                             grouped_packages[key].append({
                                 'package_id': best_pkg.id,
                                 'ready_time': best_pkg.ready_time,
@@ -392,16 +428,24 @@ class SolutionInitializer:
                         current_weight = 0
                         current_meet_point = None
 
-                # Nếu chưa được thêm (do mission đầy hoặc mới bắt đầu) -> Tạo mission mới
+                # Nếu chưa được thêm (do mission đầy hoặc mới bắt đầu) -> Tìm meet point hợp lệ và tạo mission mới
                 if not added:
-                    # Kiểm tra flight time cho meet_point nảy (package đầu tiên của mission mới)
-                    fly_time = 2 * self.problem.drone_travel_time(0, pkg_meet)
-                    if fly_time + 2 * DRONE_HANDLING_TIME > DRONE_FLIGHT_TIME:
-                        continue  # Điểm này quá xa, không thể làm meet point
+                    # Lấy trip hiện tại
+                    truck = next(t for t in trucks if t.truck_id == truck_id)
+                    trip = truck.trips[trip_idx]
+                    
+                    # Tìm meet point hợp lệ (backtrack từ vị trí package về đầu trip)
+                    valid_meet_point = self._find_valid_meet_point(
+                        trip, pkg_id, pkg_info['ready_time']
+                    )
+                    
+                    if valid_meet_point is None:
+                        # Không tìm được meet point hợp lệ -> Bỏ qua, package sẽ load từ depot
+                        continue
 
                     current_packages = [pkg_id]
                     current_weight = pkg_weight
-                    current_meet_point = pkg_meet
+                    current_meet_point = valid_meet_point
 
             # Mission cuối cùng của nhóm
             if current_packages:
@@ -440,10 +484,18 @@ class SolutionInitializer:
 
         return time
 
-    def _find_best_meet_point(self, trip: Trip, pkg_id: int, pkg_weight: int) -> Tuple[int, float]:
+    def _find_valid_meet_point(self, trip: Trip, pkg_id: int, pkg_ready_time: float) -> int:
         """
-        Tìm meet point tốt nhất cho gói hàng (backtracking từ điểm delivery ngược về đầu trip)
-        Trả về: (meet_point_id, wait_time_at_meet_point) hoặc None
+        Tìm meet point hợp lệ cho gói hàng bằng cách backtrack từ vị trí package về đầu trip.
+        Meet point hợp lệ phải thỏa mãn: tổng flight time (bao gồm wait time) < DRONE_FLIGHT_TIME
+        
+        Args:
+            trip: Trip của truck
+            pkg_id: ID của package cần tìm meet point
+            pkg_ready_time: Thời gian package sẵn sàng tại depot
+            
+        Returns:
+            meet_point ID nếu tìm được, None nếu không tìm được
         """
         # Xác định vị trí của package trong trip
         try:
@@ -451,28 +503,150 @@ class SolutionInitializer:
         except ValueError:
             return None
 
-        # Backtrack từ vị trí package về đầu trip
-        candidates = trip.route[1:pkg_idx+1] # Các candidate là các điểm từ đầu đến điểm delivery
+        # Các candidate là các điểm từ đầu trip đến vị trí package (bao gồm cả package)
+        # Backtrack từ vị trí package ngược về đầu trip
+        candidates = trip.route[1:pkg_idx+1]  # Bỏ depot đầu
         
         for meet_point in reversed(candidates):
-            # Checking feasibility
-            
-            # 1. Drone Flight Time Check
-            # Flight Time = Out + Wait + In
-            # Wait = max(0, Truck_Arrival - Drone_Arrival)
-            
-            # Ở đây ta dùng heuristic kiểm tra điều kiện cần: 
-            # Total Active Time (Fly + 2*Handling) <= Endurance
-            
+            if meet_point == 0:
+                continue  # Bỏ qua depot
+                
+            # 1. Tính thời gian bay
             fly_out = self.problem.drone_travel_time(0, meet_point)
             fly_in = self.problem.drone_travel_time(meet_point, 0)
             
-            # Total active time
-            total_active = fly_out + fly_in + 2 * DRONE_HANDLING_TIME
+            # 2. Ước tính thời gian truck đến meet point
+            truck_arrival = self._estimate_arrival_time(None, trip, meet_point)
             
-            if total_active > DRONE_FLIGHT_TIME:
-                continue # Quá xa
+            # 3. Ước tính thời gian drone đến meet point
+            # Drone xuất phát khi package ready + handling time + fly time
+            drone_arrival = pkg_ready_time + DRONE_HANDLING_TIME + fly_out
+            
+            # 4. Ước tính wait time (drone chờ truck)
+            wait_time = max(0, truck_arrival - drone_arrival)
+            
+            # 5. Tổng flight time = fly_out + wait + transfer + fly_in
+            total_flight_time = fly_out + wait_time + DRONE_HANDLING_TIME + fly_in
+            
+            # Sử dụng safety buffer 90% để đảm bảo không vi phạm
+            if total_flight_time <= DRONE_FLIGHT_TIME * 0.9:
+                return meet_point
                 
-            return meet_point
+        return None  # Không tìm được meet point hợp lệ
 
-        return None
+    def _repair_drone_missions(self, solution: Solution) -> Solution:
+        """
+        Kiểm tra và sửa chữa các drone mission vi phạm flight time constraint.
+        
+        Chiến lược sửa chữa:
+        1. Kiểm tra feasibility của solution (chỉ tập trung flight time để tối ưu)
+        2. Nếu có mission vi phạm flight time:
+           - Thử tìm meet point mới (gần hơn) cho mission đó
+           - Nếu không tìm được -> loại bỏ mission (package sẽ load từ depot)
+        3. Lặp lại cho đến khi không còn vi phạm flight time
+        """
+        import re
+        
+        # Tăng giới hạn loop vì với instance lớn (50-100 customers), số lượng vi phạm ban đầu có thể lớn
+        # Cần iterate đủ số lần để clear hết các vi phạm
+        max_repair_iterations = 500
+        
+        for iteration in range(max_repair_iterations):
+            # Chỉ kiểm tra violatins về flight time để tối ưu tốc độ
+            # (Thay vì chạy full is_feasible check cả truck capacity, v.v)
+            is_valid, flight_violations = solution.check_drone_flight_time()
+            
+            if is_valid:
+                # Nếu flight time ok, có thể return solution
+                print("Init sol OK!")
+                return solution
+            
+            # Parse violations để tìm drone_id và mission_idx vi phạm
+            repaired_any = False
+            
+            # Chỉ sửa 1 violation mỗi vòng lặp để đảm bảo tính nhất quán (vì thay đổi 1 mission có thể ảnh hưởng wait time của mission khác)
+            for violation in flight_violations:
+                # Format: "Drone X, Mission Y: flight_time=Z > W"
+                match = re.search(r'Drone (\d+), Mission (\d+)', violation)
+                if not match:
+                    continue
+                    
+                drone_id = int(match.group(1))
+                mission_idx = int(match.group(2))
+                
+                # Tìm drone và mission
+                drone = next((d for d in solution.drones if d.drone_id == drone_id), None)
+                if not drone or mission_idx >= len(drone.missions):
+                    continue
+                    
+                mission = drone.missions[mission_idx]
+                
+                # Tìm truck và trip của mission này
+                truck = next((t for t in solution.trucks if t.truck_id == mission.truck_id), None)
+                if not truck:
+                    # Không tìm được truck -> loại bỏ mission
+                    drone.missions.pop(mission_idx)
+                    repaired_any = True
+                    break
+                
+                # Tìm trip chứa meet_point
+                trip = None
+                for t in truck.trips:
+                    if mission.meet_point in t.route:
+                        trip = t
+                        break
+                
+                if not trip:
+                    # Meet point không còn trên truck -> loại bỏ mission
+                    drone.missions.pop(mission_idx)
+                    repaired_any = True
+                    break
+                
+                # Thử tìm meet point mới cho từng package trong mission
+                # Lấy max ready_time của các packages
+                max_ready = 0
+                for p in mission.packages:
+                     c = self.problem.get_customer(p)
+                     max_ready = max(max_ready, c.ready_time)
+
+                # Tìm package đầu tiên trong route (để giới hạn range tìm meet point)
+                first_pkg = None
+                first_pos = float('inf')
+                for pkg_id in mission.packages:
+                    try:
+                        pos = trip.route.index(pkg_id)
+                        if pos < first_pos:
+                            first_pos = pos
+                            first_pkg = pkg_id
+                    except ValueError:
+                        continue
+                
+                if first_pkg is None:
+                    # Không tìm được package nào trong trip -> loại bỏ mission
+                    drone.missions.pop(mission_idx)
+                    repaired_any = True
+                    break
+                
+                # Tìm meet point mới hợp lệ
+                new_meet_point = self._find_valid_meet_point(trip, first_pkg, max_ready)
+                
+                if new_meet_point is not None and new_meet_point != mission.meet_point:
+                    # Cập nhật meet point mới (khác với meet point cũ)
+                    mission.meet_point = new_meet_point
+                    repaired_any = True
+                else:
+                    # Không tìm được meet point hợp lệ HOẶC meet point 'hợp lệ' tìm được lại chính là điểm cũ (vẫn gây lỗi)
+                    # -> Loại bỏ mission (package sẽ load từ depot)
+                    drone.missions.pop(mission_idx)
+                    repaired_any = True
+                
+                # Invalidate cache và break để kiểm tra lại từ đầu
+                solution.invalidate_cache()
+                break
+            
+            if not repaired_any:
+                # Không sửa được gì thêm (có thể do lỗi parse hoặc deadlock), break để tránh lặp vô hạn
+                break
+        
+        print(f"[Initializer] Repair finished after {iteration + 1} iterations")
+        return solution

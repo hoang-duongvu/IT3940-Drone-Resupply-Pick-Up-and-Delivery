@@ -1,0 +1,7 @@
+/data/*_instances
+/data/Instances
+/report
+/.venv
+*.ipynb
+problem.txt
+solution.svg

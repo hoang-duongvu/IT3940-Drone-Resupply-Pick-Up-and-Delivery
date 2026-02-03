@@ -1,10 +1,14 @@
 import sys
 import os
+import random
+
+# Set seed for reproducibility
+random.seed(65)
 
 # Thêm thư mục src vào path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-from models import load_problem, CustomerType
+from models import load_problem, load_problem_no_C2, CustomerType
 from initializer import SolutionInitializer
 
 
@@ -211,10 +215,13 @@ def visualize_solution(solution, filename="solution.svg"):
         import traceback
         traceback.print_exc()
 
-
 def main():
-    # Đường dẫn file dữ liệu
-    data_file = "./data/test.txt"
+    # Đường dẫn file dữ liệ
+    import argparse
+    parser = argparse.ArgumentParser(description='Drone Resupply VRP')
+    parser.add_argument('--input', type=str, default="./data/0130/test2801/U_100_1.0_Num_1_pd.txt", help='Path to input data file')
+    args = parser.parse_args()
+    data_file = args.input
 
     print("\n" + "=" * 60)
     print("   DRONE RESUPPLY PICK-UP DELIVERY - SOLUTION INITIALIZER")
@@ -238,7 +245,7 @@ def main():
     print("\n[Step 4] Running Tabu Search Optimization...")
     from optimization import TabuSearch
     tabu = TabuSearch(problem, solution)
-    optimized_solution = tabu.solve(max_iterations=200, tabu_tenure=15)
+    optimized_solution = tabu.solve(max_iterations=200, tabu_tenure=20)
 
     print("\n[Step 5] Optimized Solution details:")
     optimized_solution.print_solution()
@@ -246,9 +253,6 @@ def main():
     # 5. Visualize (optional)
     print("\n[Step 6] Visualization...")
     visualize_solution(optimized_solution)
-
-    return optimized_solution
-
 
 if __name__ == "__main__":
     solution = main()

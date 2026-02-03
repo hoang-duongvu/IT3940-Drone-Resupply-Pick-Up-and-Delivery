@@ -5,10 +5,10 @@ from copy import deepcopy
 
 try:
     from .models import Solution, TruckRoute, Trip, CustomerType
-    from .config import TRUCK_CAPACITY
+    from .config import TRUCK_CAPACITY, DRONE_CAPACITY
 except ImportError:
     from models import Solution, TruckRoute, Trip, CustomerType
-    from config import TRUCK_CAPACITY
+    from config import TRUCK_CAPACITY, DRONE_CAPACITY
 
 class NeighborhoodGenerator:
     """Sinh các lân cận cho Tabu Search"""
@@ -36,9 +36,9 @@ class NeighborhoodGenerator:
         # Thử di chuyển mỗi khách hàng đến một vị trí mới
         # Giới hạn số lượng move check mỗi vòng để đảm bảo hiệu năng
         selected_positions = customer_positions
-        if len(customer_positions) > 20:
+        if len(customer_positions) > 100:
              import random
-             selected_positions = random.sample(customer_positions, 20)
+             selected_positions = random.sample(customer_positions, 100)
         
         for (t1_idx, tr1_idx, pos1) in selected_positions:
             cid = trucks[t1_idx].trips[tr1_idx].route[pos1]
@@ -86,7 +86,7 @@ class NeighborhoodGenerator:
             return []
             
         # Sample random pairs
-        num_swaps = 30
+        num_swaps = 100
         for _ in range(num_swaps):
             import random
             pos_a, pos_b = random.sample(customer_positions, 2)
@@ -109,6 +109,80 @@ class NeighborhoodGenerator:
             
         return moves
         
+    def get_add_drone_package_moves(self, solution: Solution) -> List[Tuple[str, int, int, int]]:
+        """
+        Sinh các move Add Package: Thêm một gói hàng vào mission hiện có
+        Format: ('add_drone_pkg', drone_id, mission_idx, package_id)
+        Logic: Chỉ chọn gói hàng nằm trên lộ trình Truck SAU meet_point, 
+               nhưng trong phạm vi trip đó.
+        """
+        moves = []
+        trucks = solution.trucks
+        
+        for drone in solution.drones:
+            for m_idx, mission in enumerate(drone.missions):
+                if not mission.packages:
+                    continue # Mission rỗng (hiếm gặp nếu logic tốt)
+                
+                # Check Capacity sơ bộ
+                current_weight = mission.total_weight(self.problem)
+                
+                # Xác định Trip mà mission đang resupply
+                truck = next(t for t in trucks if t.truck_id == mission.truck_id)
+                # Tìm meet_point nằm ở trip nào, pos nào
+                pos_info = truck.find_customer_position(mission.meet_point)
+                if not pos_info:
+                    continue
+                    
+                trip_idx, meet_pos = pos_info
+                trip = truck.trips[trip_idx]
+                
+                # Duyệt các gói hàng trong trip này (trừ depot)
+                # Chỉ lấy các gói hàng loại C1 (D) có thể giao bằng drone
+                for pos, cid in enumerate(trip.route):
+                    if cid == 0: continue
+                    
+                    # Logic Mới: Cho phép thêm cả gói hàng trước và sau meet_point
+                    # Nếu thêm gói trước meet_point -> meet_point sẽ phải thay đổi (về gói sớm nhất)
+                    # Logic update sẽ được xử lý trong apply_move -> _update_drone_missions
+                    
+                    customer = self.problem.get_customer(cid)
+                    
+                    # Chỉ C1 mới đi drone được
+                    if customer.ctype != CustomerType.D:
+                        continue
+                        
+                    # Gói hàng này đã có trong mission chưa?
+                    if cid in mission.packages:
+                        continue
+                        
+                    # Gói hàng đã được drone KHÁC phục vụ chưa?
+                    if not solution.is_from_depot(cid):
+                        continue # Đã được phục vụ bởi drone khác (hoặc chính drone này mission khác)
+                        
+                    # Check capacity
+                    if current_weight + customer.weight > DRONE_CAPACITY:
+                        continue
+                        
+                    moves.append(('add_drone_pkg', drone.drone_id, m_idx, cid))
+                    
+        return moves
+
+    def get_remove_drone_package_moves(self, solution: Solution) -> List[Tuple[str, int, int, int]]:
+        """
+        Sinh các move Remove Package: Xóa gói hàng khỏi mission
+        Format: ('remove_drone_pkg', drone_id, mission_idx, package_id)
+        """
+        moves = []
+        for drone in solution.drones:
+            for m_idx, mission in enumerate(drone.missions):
+                if not mission.packages:
+                    continue
+                
+                for pkg in mission.packages:
+                    # Thử xóa pkg này
+                    moves.append(('remove_drone_pkg', drone.drone_id, m_idx, pkg))
+        return moves
 
     def apply_move(self, solution: Solution, move) -> Solution:
         """
@@ -150,19 +224,43 @@ class NeighborhoodGenerator:
             c1 = truck1.trips[tr1].route[p1]
             c2 = truck2.trips[tr2].route[p2]
             
-            truck1.trips[tr1].route[p1] = c2
             truck2.trips[tr2].route[p2] = c1
+            
+        elif move_type == 'add_drone_pkg':
+            _, d_id, m_idx, pkg_id = move
+            drone = next(d for d in new_sol.drones if d.drone_id == d_id)
+            mission = drone.missions[m_idx]
+            mission.add_package(pkg_id)
+            
+            # Cập nhật meet_point nếu gói hàng mới nằm trước meet_point cũ
+            # Tìm vị trí meet_point hiện tại và gói hàng mới
+            truck = next(t for t in new_sol.trucks if t.truck_id == mission.truck_id)
+            pos_meet = truck.find_customer_position(mission.meet_point)
+            pos_new = truck.find_customer_position(pkg_id)
+            
+            if pos_meet and pos_new:
+                 # Cả 2 cùng 1 trip (giả định logic get_move)
+                 if pos_new[1] < pos_meet[1]:
+                     mission.meet_point = pkg_id
+            
+        elif move_type == 'remove_drone_pkg':
+            _, d_id, m_idx, pkg_id = move
+            drone = next(d for d in new_sol.drones if d.drone_id == d_id)
+            mission = drone.missions[m_idx]
+            if pkg_id in mission.packages:
+                mission.packages.remove(pkg_id)
+            
+            # Nếu mission rỗng sau khi xóa -> Xóa mission luôn khỏi danh sách
+            if not mission.packages:
+                drone.missions.pop(m_idx)
             
         # Do solution đã thay đổi nên cần xóa các thông tin cũ (is_feasible, makespan)
         new_sol.invalidate_cache()
         
         # Quan trọng: Khi thay đổi route truck, các Drone Mission trỏ đến meet_point cũ 
         # có thể bị invalid (ví dụ: meet_point không còn nằm trên truck đó nữa, hoặc sai thứ tự).
-        # Ta sẽ sử dụng hàm sửa chữa Drone để khắc phục vấn đề này
-        # Không thay đổi Drone Assignment, nhưng cần kiểm tra xem meet_point còn tồn tại trên truck cũ không.
-        # Nếu customer bị move đi truck khác, mission đó sẽ fail check_capacity (ko tìm thấy meet point).
-        # -> Cần cập nhật lại truck_id trong mission nếu meet_point bị di chuyển qua truck khác.
-        self._update_drone_missions(new_sol)
+        if move_type in ['relocate', 'swap']:
+            self._update_drone_missions(new_sol)
         
         return new_sol
         
@@ -245,14 +343,14 @@ class TabuSearch:
         self.tabu_list = {} # Key: move_signature, Value: expiry_iteration
         
     def get_move_signature(self, move):
-        # Tạo signature để định danh move trong tabu list
-        # Ví dụ: Relocate C1 từ T1 -> T2. Tabu reversal: C1 từ T2 -> T1.
-        # Ở đây đơn giản hóa: cấm di chuyển Customer C1 trong X iters.
         move_type = move[0]
         if move_type == 'relocate':
-            # move: ('relocate', t1, tr1, p1, t2, tr2, p2)
             return tuple(move)
         elif move_type == 'swap':
+            return tuple(move)
+        elif move_type == 'add_drone_pkg':
+            return tuple(move)
+        elif move_type == 'remove_drone_pkg':
             return tuple(move)
         return None
 
@@ -273,20 +371,36 @@ class TabuSearch:
         while iteration < max_iterations:
             iteration += 1
             
-            # 1. Generate Neighborhood
+            # 1. Generate Neighborhood with Ratios
+            # User request: 60% Relocate, 30% Swap, 5% Add Drone, 5% Remove Drone
+            # Assumed batch size: 100 candidates per iteration
+            BATCH_SIZE = 1000
+            
+            moves_relocate = self.neighborhood.get_relocate_moves(self.current_solution)
+            moves_swap = self.neighborhood.get_swap_moves(self.current_solution)
+            moves_add = self.neighborhood.get_add_drone_package_moves(self.current_solution)
+            moves_remove = self.neighborhood.get_remove_drone_package_moves(self.current_solution)
+            
+            import random
+            
+            # Helper to sample
+            def sample_moves(moves, count):
+                if len(moves) > count:
+                    return random.sample(moves, count)
+                return moves
+
             candidates = []
-            candidates.extend(self.neighborhood.get_relocate_moves(self.current_solution))
-            candidates.extend(self.neighborhood.get_swap_moves(self.current_solution))
+            candidates.extend(sample_moves(moves_relocate, int(BATCH_SIZE * 0.60)))
+            candidates.extend(sample_moves(moves_swap, int(BATCH_SIZE * 0.30)))
+            candidates.extend(sample_moves(moves_add, int(BATCH_SIZE * 0.05)))
+            candidates.extend(sample_moves(moves_remove, int(BATCH_SIZE * 0.05)))
             
             # 2. Evaluate Candidates
             best_move = None
             best_move_makespan = float('inf')
             best_move_sol = None
             
-            # Chỉ đánh giá một tập con ngẫu nhiên nếu quá nhiều candidates
-            import random
-            if len(candidates) > 50:
-                candidates = random.sample(candidates, 50)
+
             
             for move in candidates:
                 # Apply move
@@ -329,16 +443,96 @@ class TabuSearch:
                     # Log progress occasionally
                     if iteration % 10 == 0:
                         print(f"[TabuSearch] Iter {iteration}: Best Move {best_move_makespan:.2f} (Global Best: {best_makespan:.2f})")
-                
-                # Update Tabu List
-                # Add REVERSE move to tabu
-                # Simple implementation: Add applied move to tabu (to prevent immediate undo if we treated it as "current state is tabu")
-                # Better: Forbidden to return to previous state.
                 self.tabu_list[self.get_move_signature(best_move)] = iteration + tabu_tenure
             else:
-                # No valid move found (Stuck)
                 print(f"[TabuSearch] Iter {iteration}: No valid non-tabu moves found.")
                 break
                 
         print(f"[TabuSearch] Finished. Final Makespan: {best_makespan:.2f}")
+        return self.best_solution
+
+    def solve4bench(self, max_iterations=50, tabu_tenure=10):
+        iteration = 0
+        best_makespan = self.best_solution.calculate_makespan()
+        
+        # Initial validation
+        valid, violations = self.best_solution.is_feasible()
+        if not valid:
+            print(f"[TabuSearch] WARNING: Initial solution is infeasible! {violations[:2]}...")
+            best_makespan = float('inf')
+
+        while iteration < max_iterations:
+            iteration += 1
+            
+            # 1. Generate Neighborhood with Ratios
+            # User request: 60% Relocate, 30% Swap, 5% Add Drone, 5% Remove Drone
+            # Assumed batch size: 100 candidates per iteration
+            BATCH_SIZE = 1000
+            
+            moves_relocate = self.neighborhood.get_relocate_moves(self.current_solution)
+            moves_swap = self.neighborhood.get_swap_moves(self.current_solution)
+            moves_add = self.neighborhood.get_add_drone_package_moves(self.current_solution)
+            moves_remove = self.neighborhood.get_remove_drone_package_moves(self.current_solution)
+            
+            import random
+            
+            # Helper to sample
+            def sample_moves(moves, count):
+                if len(moves) > count:
+                    return random.sample(moves, count)
+                return moves
+
+            candidates = []
+            candidates.extend(sample_moves(moves_relocate, int(BATCH_SIZE * 0.60)))
+            candidates.extend(sample_moves(moves_swap, int(BATCH_SIZE * 0.30)))
+            candidates.extend(sample_moves(moves_add, int(BATCH_SIZE * 0.05)))
+            candidates.extend(sample_moves(moves_remove, int(BATCH_SIZE * 0.05)))
+            
+            # 2. Evaluate Candidates
+            best_move = None
+            best_move_makespan = float('inf')
+            best_move_sol = None
+            
+
+            
+            for move in candidates:
+                # Apply move
+                neighbor_sol = self.neighborhood.apply_move(self.current_solution, move)
+                
+                # Check feasibility
+                is_feasible, _ = neighbor_sol.is_feasible()
+                if not is_feasible:
+                    continue
+                    
+                makespan = neighbor_sol.calculate_makespan()
+                
+                # Check Tabu & Aspiration
+                move_sig = self.get_move_signature(move)
+                is_tabu = False
+                if move_sig in self.tabu_list:
+                    if self.tabu_list[move_sig] > iteration:
+                        is_tabu = True
+                
+                # Aspiration: Nếu tốt hơn Global Best -> override tabu
+                if is_tabu and makespan < best_makespan:
+                    is_tabu = False
+                    
+                if not is_tabu:
+                    if makespan < best_move_makespan:
+                        best_move_makespan = makespan
+                        best_move = move
+                        best_move_sol = neighbor_sol
+            
+            # 3. Apply Best Move
+            if best_move:
+                self.current_solution = best_move_sol
+                
+                # Update Best Global
+                if best_move_makespan < best_makespan:
+                    self.best_solution = best_move_sol.copy()
+                    best_makespan = best_move_makespan
+                self.tabu_list[self.get_move_signature(best_move)] = iteration + tabu_tenure
+            else:
+                break
+                
         return self.best_solution

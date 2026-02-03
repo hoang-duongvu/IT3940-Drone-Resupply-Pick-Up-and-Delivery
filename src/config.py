@@ -39,8 +39,8 @@ TRUCK_SERVICE_TIME = get_env_float('TRUCK_SERVICE_TIME', 3.0)  # min
 TRUCK_RECEIVE_TIME = get_env_float('TRUCK_RECEIVE_TIME', 5.0)  # min (δt)
 
 # Drone parameters
-DRONE_CAPACITY = get_env_int('DRONE_CAPACITY', 10)          # packages
-DRONE_SPEED = get_env_float('DRONE_SPEED', 60.0)            # km/h
+DRONE_CAPACITY = get_env_int('DRONE_CAPACITY', 2)          # packages
+DRONE_SPEED = get_env_float('DRONE_SPEED', 100.0)            # km/h
 DRONE_FLIGHT_TIME = get_env_float('DRONE_FLIGHT_TIME', 90.0)  # min
 DRONE_HANDLING_TIME = get_env_float('DRONE_HANDLING_TIME', 5.0)  # min
 
